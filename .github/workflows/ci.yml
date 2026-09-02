@@ -11,63 +11,97 @@ permissions:
   contents: read
 
 jobs:
-  darwin:
-    name: darwin (on-device IOKit HID + USB enumeration, CGO=0)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.27.0'
-      - name: Gofmt
-        run: test -z "$(gofmt -l .)"
-      - name: Vet
-        run: CGO_ENABLED=0 go vet ./...
-      - name: "Test (CGO=0, real IOKit; enumerate, open, stream)"
-        run: CGO_ENABLED=0 go test -count=1 -coverprofile=cover.out ./...
-      - name: Coverage summary
-        run: go tool cover -func=cover.out | tail -1
-      - name: Race (CGO=1)
-        run: CGO_ENABLED=1 go test -race -count=1 ./...
-      - name: "Probe (listing only; a CI runner has no XR device to stream from)"
-        run: CGO_ENABLED=0 go run ./cmd/hidprobe
-      - name: "USB probe (read-only listing; opens nothing)"
-        run: CGO_ENABLED=0 go run ./cmd/usbprobe
-      - name: "Serial probe (list ports, then the loopback control)"
-        run: |
-          CGO_ENABLED=0 go run ./cmd/serialprobe
-          CGO_ENABLED=0 go run ./cmd/serialprobe -selftest
-
-  linux:
-    name: linux (stub build + OS-independent tests)
+  # A workflow that fails to PARSE reports nothing at all: no jobs run, no
+  # checks appear, and the pull request looks unexercised rather than broken.
+  # This is the only lane that would notice.
+  actionlint:
+    name: workflows parse
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.27.0'
-      - name: Vet
-        run: CGO_ENABLED=0 go vet ./...
-      - name: Build stub
-        run: CGO_ENABLED=0 go build ./...
-      - name: Test (stub + OS-independent core)
-        run: CGO_ENABLED=0 go test -count=1 ./...
-      - name: Race (OS-independent core)
-        run: CGO_ENABLED=1 go test -race -count=1 ./...
+      - uses: actions/checkout@v5
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
 
-  windows:
-    name: windows (stub build)
-    runs-on: windows-latest
+  test:
+    name: ${{ matrix.os }} (CGO=0)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        # bash on every runner. PowerShell splits a native argument at the
+        # "=", so "-coverprofile=cover.out" arrives as two, and the test run
+        # fails with "FAIL .out [setup failed]" -- which names neither the
+        # shell nor the flag.
+        shell: bash
+    env:
+      CGO_ENABLED: "0"
+      GOTOOLCHAIN: local
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: '1.27.0'
-      - name: Build stub
+          go-version-file: go.mod
+      - name: Gofmt
+        if: matrix.os == 'ubuntu-latest'
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: Tidy is committed
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -coverprofile=cover.out ./...
+      # Nothing in this module touches an operating system, so the coverage
+      # gate is not a macOS-shaped exception: it applies everywhere, on every
+      # line.
+      - name: 100% coverage gate
+        run: |
+          go tool cover -func=cover.out | tee full.txt
+          if grep -v '100\.0%' full.txt | grep -v '^total:'; then
+            echo "::error::below 100% (lines above)"; exit 1
+          fi
+
+  race:
+    name: race
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Race
+        run: go test -race ./...
+
+  cross:
+    name: cross ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: arm64}
+          - {goos: linux, goarch: riscv64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: windows, goarch: arm64}
+          - {goos: js, goarch: wasm}
+    env:
+      CGO_ENABLED: "0"
+      GOTOOLCHAIN: local
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build
         run: go build ./...
-        env:
-          CGO_ENABLED: '0'
-      - name: Test (stub + OS-independent core)
-        run: go test -count=1 ./...
-        env:
-          CGO_ENABLED: '0'
