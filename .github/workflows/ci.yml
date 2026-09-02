@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  darwin:
+    name: darwin (on-device IOKit HID + USB enumeration, CGO=0)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.0'
+      - name: Gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./...
+      - name: "Test (CGO=0, real IOKit; enumerate, open, stream)"
+        run: CGO_ENABLED=0 go test -count=1 -coverprofile=cover.out ./...
+      - name: Coverage summary
+        run: go tool cover -func=cover.out | tail -1
+      - name: Race (CGO=1)
+        run: CGO_ENABLED=1 go test -race -count=1 ./...
+      - name: "Probe (listing only; a CI runner has no XR device to stream from)"
+        run: CGO_ENABLED=0 go run ./cmd/hidprobe
+      - name: "USB probe (read-only listing; opens nothing)"
+        run: CGO_ENABLED=0 go run ./cmd/usbprobe
+      - name: "Serial probe (list ports, then the loopback control)"
+        run: |
+          CGO_ENABLED=0 go run ./cmd/serialprobe
+          CGO_ENABLED=0 go run ./cmd/serialprobe -selftest
+
+  linux:
+    name: linux (stub build + OS-independent tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.0'
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./...
+      - name: Build stub
+        run: CGO_ENABLED=0 go build ./...
+      - name: Test (stub + OS-independent core)
+        run: CGO_ENABLED=0 go test -count=1 ./...
+      - name: Race (OS-independent core)
+        run: CGO_ENABLED=1 go test -race -count=1 ./...
+
+  windows:
+    name: windows (stub build)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.0'
+      - name: Build stub
+        run: go build ./...
+        env:
+          CGO_ENABLED: '0'
+      - name: Test (stub + OS-independent core)
+        run: go test -count=1 ./...
+        env:
+          CGO_ENABLED: '0'
