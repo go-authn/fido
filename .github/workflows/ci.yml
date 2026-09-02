@@ -31,6 +31,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        # bash on every runner. PowerShell splits a native argument at the
+        # "=", so "-coverprofile=cover.out" arrives as two, and the test run
+        # fails with "FAIL .out [setup failed]" -- which names neither the
+        # shell nor the flag.
+        shell: bash
     env:
       CGO_ENABLED: "0"
       GOTOOLCHAIN: local
