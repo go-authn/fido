@@ -88,4 +88,19 @@ whoever is protecting something.
 All of it has been run against a real YubiKey FIDO 5.7.4: registered, asserted,
 and the signature verified against the public key the key itself handed out.
 
-`ClientPIN` is not here yet.
+`ClientPIN` is here: both PIN/UV auth protocols, `PINRetries`, `KeyAgreement`
+and `PINToken`, and a token wires into `MakeCredential` and `GetAssertion` to
+turn "somebody touched the key" into "somebody who knows its PIN touched it".
+
+The two protocols are not a version number. Protocol one hashes the ECDH output
+once and uses the same 32 bytes as both AES and HMAC key, with a zero
+initialisation vector and a 16-byte truncated HMAC; protocol two derives two
+separate keys through HKDF, prepends a fresh IV, and truncates nothing. A
+package that treated them as interchangeable would pass every round-trip test
+and be wrong on the wire, so a test plays the AUTHENTICATOR's side and checks
+that both sides derive the same secret.
+
+The status-code table comes from libfido2's `err.h`, and it had to: an earlier
+version was written from memory and five of its entries were wrong. A real key
+caught it by answering `0x35` -- no PIN set -- which the table did not name
+while claiming `0x2F` meant that.

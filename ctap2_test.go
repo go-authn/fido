@@ -141,6 +141,24 @@ func TestStatusNamesWhatACallerCanActOn(t *testing.T) {
 	if got := Status(0x31).String(); !strings.Contains(got, "PIN was wrong") {
 		t.Errorf("0x31 = %q", got)
 	}
+	// 0x35 is what a real YubiKey with no PIN set answers to getPINRetries.
+	// An earlier table claimed 0x2F meant this, and 0x2F is a timeout; the
+	// hardware caught it.
+	if got := Status(0x35).String(); !strings.Contains(got, "no PIN is set") {
+		t.Errorf("0x35 = %q, want it to say no PIN is set", got)
+	}
+	if got := Status(0x2f).String(); !strings.Contains(got, "did not act in time") {
+		t.Errorf("0x2f = %q, want a timeout", got)
+	}
+	if got := Status(0x36).String(); !strings.Contains(got, "PIN is required") {
+		t.Errorf("0x36 = %q", got)
+	}
+	if got := Status(0x2e).String(); !strings.Contains(got, "no credential") {
+		t.Errorf("0x2e = %q", got)
+	}
+	if got := Status(0x12).String(); !strings.Contains(got, "CBOR was invalid") {
+		t.Errorf("0x12 = %q", got)
+	}
 	if got := Status(0x3A).String(); !strings.Contains(got, "did not touch") {
 		t.Errorf("0x3A = %q", got)
 	}
@@ -219,7 +237,7 @@ func TestAKeyThatDoesNotSpeakCTAP2IsNotAsked(t *testing.T) {
 
 func TestACTAP2RefusalIsReportedInWords(t *testing.T) {
 	k := ctap2Key(t, CapCBOR, func(byte, []byte) []byte {
-		return []byte{0x2B} // a PIN is required
+		return []byte{0x36} // a PIN is required
 	})
 	_, err := k.GetInfo(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "PIN is required") {

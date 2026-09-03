@@ -32,21 +32,31 @@ const StatusOK Status = 0x00
 // The status codes worth naming: the ones a caller can act on. The rest are
 // rendered as their number, because inventing a name for a code this package
 // has never seen would be a guess dressed as documentation.
+//
+// These values come from libfido2's fido/err.h, and they had to: an earlier
+// version of this table was written from memory and FIVE of its entries were
+// wrong. A real key caught it by answering 0x35, which the table did not name
+// while claiming 0x2F meant what 0x35 means. A status table is exactly the kind
+// of thing that looks right and is not.
 var statusNames = map[Status]string{
 	0x01: "the command is not one this authenticator knows",
 	0x02: "a parameter was wrong",
-	0x11: "the CBOR was invalid",
-	0x12: "the CBOR was not what the command expects",
-	0x19: "an operation is already in progress",
-	0x22: "no credential the authenticator holds matches",
-	0x2B: "a PIN is required and none was given",
-	0x2F: "the PIN is not set on this authenticator",
+	0x11: "the CBOR held a type the command did not expect",
+	0x12: "the CBOR was invalid",
+	0x24: "an operation is already in progress",
+	0x27: "the person refused",
+	0x2b: "an option this authenticator does not support",
+	0x2e: "no credential the authenticator holds matches",
+	0x2f: "the person did not act in time",
 	0x31: "the PIN was wrong",
 	0x32: "too many wrong PINs; unplug the key and try again",
+	0x33: "the PIN token was not accepted",
 	0x34: "too many wrong PINs; the authenticator is locked",
-	0x36: "the PIN is blocked until the key is unplugged",
-	0x3A: "the person did not touch the key in time",
-	0x3B: "the person refused",
+	0x35: "no PIN is set on this authenticator",
+	0x36: "a PIN is required and none was given",
+	0x37: "the PIN does not meet the authenticator's policy",
+	0x3a: "the person did not touch the key in time",
+	0x3b: "the key needs to be touched",
 }
 
 // Error reports whether the status is a refusal.
