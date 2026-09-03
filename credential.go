@@ -73,6 +73,11 @@ type MakeCredentialRequest struct {
 	// a discoverable credential and "uv" to demand verification rather than
 	// mere presence.
 	Options map[string]bool
+	// Token, when valid, authorises the request: it is what turns "somebody
+	// touched the key" into "somebody who knows its PIN touched the key", and
+	// it is the only way to get the verified bit set on an authenticator whose
+	// verification IS a PIN.
+	Token Token
 }
 
 // Attestation is what a registration returns.
@@ -98,6 +103,9 @@ type GetAssertionRequest struct {
 	// has if one was registered with the "rk" option.
 	Allow   []Credential
 	Options map[string]bool
+	// Token, when valid, authorises the request. See
+	// [MakeCredentialRequest.Token].
+	Token Token
 }
 
 // Assertion is what an authenticator answers with.
@@ -120,21 +128,25 @@ type Assertion struct {
 
 // The parameter keys, as the specification numbers them.
 const (
-	mcClientDataHash   = 0x01
-	mcRP               = 0x02
-	mcUser             = 0x03
-	mcPubKeyCredParams = 0x04
-	mcExcludeList      = 0x05
-	mcOptions          = 0x07
+	mcClientDataHash    = 0x01
+	mcRP                = 0x02
+	mcUser              = 0x03
+	mcPubKeyCredParams  = 0x04
+	mcExcludeList       = 0x05
+	mcOptions           = 0x07
+	mcPinUvAuthParam    = 0x08
+	mcPinUvAuthProtocol = 0x09
 
 	mcRespFmt      = 0x01
 	mcRespAuthData = 0x02
 	mcRespAttStmt  = 0x03
 
-	gaRPID           = 0x01
-	gaClientDataHash = 0x02
-	gaAllowList      = 0x03
-	gaOptions        = 0x05
+	gaRPID              = 0x01
+	gaClientDataHash    = 0x02
+	gaAllowList         = 0x03
+	gaOptions           = 0x05
+	gaPinUvAuthParam    = 0x06
+	gaPinUvAuthProtocol = 0x07
 
 	gaRespCredential = 0x01
 	gaRespAuthData   = 0x02
@@ -192,6 +204,13 @@ func (k *Key) MakeCredential(ctx context.Context, r MakeCredentialRequest) (*Att
 	if len(r.Options) > 0 {
 		req[mcOptions] = r.Options
 	}
+	if r.Token.Valid() {
+		// The parameter is authenticated over the CLIENT DATA HASH, not over
+		// the request: an authenticator checks that the caller who holds the
+		// token is the caller who chose what is being signed.
+		req[mcPinUvAuthParam] = r.Token.authParam(r.ClientDataHash)
+		req[mcPinUvAuthProtocol] = int(r.Token.Protocol())
+	}
 	body, err := k.cborCall(ctx, CmdMakeCredential, req)
 	if err != nil {
 		return nil, err
@@ -243,6 +262,10 @@ func (k *Key) GetAssertion(ctx context.Context, r GetAssertionRequest) (*Asserti
 	}
 	if len(r.Options) > 0 {
 		req[gaOptions] = r.Options
+	}
+	if r.Token.Valid() {
+		req[gaPinUvAuthParam] = r.Token.authParam(r.ClientDataHash)
+		req[gaPinUvAuthProtocol] = int(r.Token.Protocol())
 	}
 	body, err := k.cborCall(ctx, CmdGetAssertion, req)
 	if err != nil {
