@@ -1,5 +1,9 @@
 # fido
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/go-authn/fido.svg)](https://pkg.go.dev/github.com/go-authn/fido)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-0A6E96?style=flat-square)](LICENSE)
+[![CI](https://github.com/go-authn/fido/actions/workflows/ci.yml/badge.svg)](https://github.com/go-authn/fido/actions/workflows/ci.yml)
+
 Speaks the FIDO client-to-authenticator protocol to a security key, in pure Go
 with `CGO_ENABLED=0`, on any operating system.
 
