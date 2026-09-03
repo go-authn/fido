@@ -52,4 +52,15 @@ wink — covered to 100%, with a fake transport that reassembles what it is sent
 so a key that refuses, a key that stalls, a key that keeps saying it is busy and
 another program talking on the same key are all ordinary tests.
 
-CBOR, `makeCredential`, `getAssertion` and `ClientPIN` are not here yet.
+`GetInfo` asks a CTAP2 authenticator to describe itself -- versions,
+extensions, AAGUID, options -- and is decoded against a reply CAPTURED FROM A
+REAL KEY rather than one written by hand from the specification. A fixture
+written from the spec only proves the code agrees with whoever wrote the
+fixture.
+
+CBOR comes from [fxamacker/cbor](https://github.com/fxamacker/cbor), which is
+what `go-webauthn/webauthn` depends on and which ships `CTAP2EncOptions` for
+exactly this. Unlike the CTAP client space, CBOR in Go has a reference, so this
+uses it.
+
+`makeCredential`, `getAssertion` and `ClientPIN` are not here yet.
