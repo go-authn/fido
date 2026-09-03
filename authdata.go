@@ -80,11 +80,10 @@ type AuthData struct {
 	// The rest is present only when [FlagAT] is set, which is a registration.
 	AAGUID       [16]byte
 	CredentialID []byte
-	// PublicKey is the credential's public key, as COSE_Key CBOR. It is left
-	// encoded: turning it into a Go key means choosing a curve library, and
-	// that choice belongs to whoever verifies signatures rather than to the
-	// package that reads the bytes.
-	PublicKey cbor.RawMessage
+	// COSEKey is the credential's public key, as COSE_Key CBOR. It is kept
+	// encoded because that is what arrived; [AuthData.PublicKey] turns it into
+	// an ECDSA key when it is one.
+	COSEKey cbor.RawMessage
 
 	// Extensions is present only when [FlagED] is set.
 	Extensions cbor.RawMessage
@@ -145,7 +144,7 @@ func ParseAuthData(b []byte) (AuthData, error) {
 		if err := dec.Decode(&key); err != nil {
 			return AuthData{}, fmt.Errorf("fido: the credential's public key is not CBOR: %w", err)
 		}
-		a.PublicKey = key
+		a.COSEKey = key
 		rest = rest[dec.NumBytesRead():]
 	}
 

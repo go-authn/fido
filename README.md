@@ -75,6 +75,13 @@ those two agreeing with each other and both being wrong. It caught something
 immediately -- the prose describing that sample says its flags are `0x45`, and
 the bytes say `0x41`. The bytes win.
 
-`ClientPIN` is not here yet, and no signature is verified: that means choosing a
-curve library, and the choice belongs to whoever checks the signature rather
-than to the package that reads the bytes.
+`AuthData.PublicKey` turns the credential's COSE key into a `*ecdsa.PublicKey`,
+so a caller can check the signature with the standard library and nothing else.
+That is a CONVERSION, not a verification: what counts as valid -- which
+algorithms, what to do about a sign counter that went backwards -- belongs to
+whoever is protecting something.
+
+All of it has been run against a real YubiKey FIDO 5.7.4: registered, asserted,
+and the signature verified against the public key the key itself handed out.
+
+`ClientPIN` is not here yet.
