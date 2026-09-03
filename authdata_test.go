@@ -60,11 +60,11 @@ func TestParseAuthDataOnTheReferenceSample(t *testing.T) {
 	// The public key is CBOR of unstated length, and finding where it ends is
 	// the hard part of this layout. It ends exactly at the end of the data:
 	// one byte over or under and the check below fails.
-	if len(a.PublicKey) != 77 {
-		t.Errorf("public key is %d bytes, want 77", len(a.PublicKey))
+	if len(a.COSEKey) != 77 {
+		t.Errorf("public key is %d bytes, want 77", len(a.COSEKey))
 	}
 	var key map[int64]cbor.RawMessage
-	if err := cbor.Unmarshal(a.PublicKey, &key); err != nil {
+	if err := cbor.Unmarshal(a.COSEKey, &key); err != nil {
 		t.Errorf("the public key is not a COSE map: %v", err)
 	}
 	if len(a.Extensions) != 0 {
@@ -114,7 +114,7 @@ func TestParseAuthDataWithoutACredential(t *testing.T) {
 	if !a.Flags.Has(FlagUV) || a.SignCount != 42 {
 		t.Errorf("got %v", a)
 	}
-	if a.CredentialID != nil || a.PublicKey != nil {
+	if a.CredentialID != nil || a.COSEKey != nil {
 		t.Error("an assertion came back carrying a credential")
 	}
 	if got := a.String(); strings.Contains(got, "credential") {
