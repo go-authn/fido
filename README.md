@@ -63,4 +63,18 @@ what `go-webauthn/webauthn` depends on and which ships `CTAP2EncOptions` for
 exactly this. Unlike the CTAP client space, CBOR in Go has a reference, so this
 uses it.
 
-`makeCredential`, `getAssertion` and `ClientPIN` are not here yet.
+`MakeCredential` registers a credential and `GetAssertion` asks the
+authenticator to sign, with the parameters numbered as the specification
+numbers them and the authenticator data parsed -- flags, sign count, credential
+id, COSE public key, extensions.
+
+The authenticator-data parser is checked against a sample from
+**go-webauthn/webauthn's own tests**: an EXTERNAL witness. Every other fixture
+here came from hardware or from this code, so it is the only one that can catch
+those two agreeing with each other and both being wrong. It caught something
+immediately -- the prose describing that sample says its flags are `0x45`, and
+the bytes say `0x41`. The bytes win.
+
+`ClientPIN` is not here yet, and no signature is verified: that means choosing a
+curve library, and the choice belongs to whoever checks the signature rather
+than to the package that reads the bytes.
