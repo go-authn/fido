@@ -56,6 +56,12 @@ wink — covered to 100%, with a fake transport that reassembles what it is sent
 so a key that refuses, a key that stalls, a key that keeps saying it is busy and
 another program talking on the same key are all ordinary tests.
 
+The framing is exported for whoever drives a key some other way: `Split` cuts a
+message into 64-byte reports, `NewReassembler` and `Reassembler.Feed` put
+replies back together into a `Message`, `ParseInit` reads the `INIT` reply, and
+`Key.CBOR` sends a raw CTAP2 command and returns the body, a failing `Status`
+turned into an error. go-authn/keyfactor's tests drive their fake key with exactly these.
+
 `GetInfo` asks a CTAP2 authenticator to describe itself -- versions,
 extensions, AAGUID, options -- and is decoded against a reply CAPTURED FROM A
 REAL KEY rather than one written by hand from the specification. A fixture
@@ -88,7 +94,7 @@ whoever is protecting something.
 All of it has been run against a real YubiKey FIDO 5.7.4: registered, asserted,
 and the signature verified against the public key the key itself handed out.
 
-`ClientPIN` is here: both PIN/UV auth protocols, `PINRetries`, `KeyAgreement`
+`authenticatorClientPIN` (`CmdClientPIN`) is here: both PIN/UV auth protocols, `PINRetries`, `KeyAgreement`
 and `PINToken`, and a token wires into `MakeCredential` and `GetAssertion` to
 turn "somebody touched the key" into "somebody who knows its PIN touched it".
 
