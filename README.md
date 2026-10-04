@@ -49,6 +49,14 @@ because a short ping comes back the same either way:
   new message. An earlier draft used 65535 and carried a comment asserting the
   framing reached it. The arithmetic was wrong.
 
+A key is not trusted to answer what it was asked, either. A reply is refused
+unless it carries the command that was sent (CTAP 2.1 §11.2.9 gives each
+command's response its own `CMD`, and libfido2 checks it too). A PIN token is
+refused unless it has its protocol's length: 16 or 32 bytes under protocol
+one, exactly 32 under protocol two (§6.5.6, §6.5.7). Both checks came from a
+security review: neither had a demonstrated impact, but nothing else stood
+between what a forged key sends and the parser that reads it.
+
 ## What is here
 
 The CTAPHID framing, the handshake, channel negotiation, capabilities, ping and
