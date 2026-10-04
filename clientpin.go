@@ -226,6 +226,14 @@ func (k *Key) PINToken(ctx context.Context, pin string, proto PINProtocol, perms
 	if err != nil {
 		return Token{}, fmt.Errorf("fido: the token will not decrypt: %w", err)
 	}
+	// CTAP 2.1 6.5.6 and 6.5.7: a pinUvAuthToken is 16 or 32 bytes under
+	// protocol one, and exactly 32 under protocol two. Anything else is not a
+	// token, and every request it then authorised would carry an HMAC keyed
+	// by whatever the key chose to send.
+	if len(tok) != 32 && (proto != PINProtocolOne || len(tok) != 16) {
+		return Token{}, fmt.Errorf("fido: the token is %d bytes, and PIN protocol %d makes one of %s",
+			len(tok), proto, map[bool]string{true: "16 or 32", false: "32"}[proto == PINProtocolOne])
+	}
 	return Token{keys: keys, raw: tok}, nil
 }
 

@@ -174,6 +174,14 @@ func (k *Key) roundTrip(ctx context.Context, cmd byte, data []byte) ([]byte, err
 			}
 			return nil, fmt.Errorf("fido: %s refused the request (CTAPHID error %#02x)", k.t.Name(), code)
 		}
+		// ⛔ A reply is to the command that was sent (CTAP 2.1 11.2.9: each
+		// command's response carries its own CMD), as libfido2 checks too.
+		// One to another command is not this answer, whatever its bytes say:
+		// a CBOR reply read as a PING echo, or the reverse, is a parser fed
+		// what it was never meant to read.
+		if msg.Cmd != cmd {
+			return nil, fmt.Errorf("fido: %s answered command %#02x to command %#02x", k.t.Name(), msg.Cmd, cmd)
+		}
 		return msg.Data, nil
 	}
 }
