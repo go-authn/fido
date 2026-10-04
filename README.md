@@ -10,7 +10,7 @@ with `CGO_ENABLED=0`, on any operating system.
 ```go
 k, err := fido.Open(ctx, transport)   // handshake, channel, capabilities
 defer k.Close()
-fmt.Println(k)                        // YubiKey FIDO (CTAPHID v2, firmware 5.7.4, wink, ctap2, ctap1)
+fmt.Println(k)                        // YubiKey FIDO (CTAPHID v2, firmware 5.7.4, wink, ctap2, ctap1) on channel 0x…
 err = k.Wink(ctx)                     // the key blinks: which one is this?
 ```
 
