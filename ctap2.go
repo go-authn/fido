@@ -38,6 +38,14 @@ const StatusOK Status = 0x00
 // wrong. A real key caught it by answering 0x35, which the table did not name
 // while claiming 0x2F meant what 0x35 means. A status table is exactly the kind
 // of thing that looks right and is not.
+//
+// The codes were right and two SENTENCES were still swapped: 0x32 said "unplug
+// the key" and 0x34 "the authenticator is locked". CTAP 2.1 (8.2, status
+// codes) says the opposite: 0x32 CTAP2_ERR_PIN_BLOCKED is "PIN Blocked" -- the
+// retry counter ran out, and only authenticatorReset, which erases every
+// credential, lifts it -- while 0x34 CTAP2_ERR_PIN_AUTH_BLOCKED "Requires power
+// cycle to reset". Told the key was locked when unplugging it would have done,
+// a person may reset it and lose every credential on it.
 var statusNames = map[Status]string{
 	0x01: "the command is not one this authenticator knows",
 	0x02: "a parameter was wrong",
@@ -49,9 +57,9 @@ var statusNames = map[Status]string{
 	0x2e: "no credential the authenticator holds matches",
 	0x2f: "the person did not act in time",
 	0x31: "the PIN was wrong",
-	0x32: "too many wrong PINs; unplug the key and try again",
+	0x32: "the PIN is blocked: no tries are left, and only a reset, which erases the credentials, unblocks it",
 	0x33: "the PIN token was not accepted",
-	0x34: "too many wrong PINs; the authenticator is locked",
+	0x34: "too many wrong PINs in a row; unplug the key and plug it in again",
 	0x35: "no PIN is set on this authenticator",
 	0x36: "a PIN is required and none was given",
 	0x37: "the PIN does not meet the authenticator's policy",

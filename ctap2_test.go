@@ -271,3 +271,17 @@ func TestAnInfoNobodyFilledInStillReads(t *testing.T) {
 		t.Errorf("an Info with only options renders as %q", got)
 	}
 }
+
+// The two PIN lockouts say what CTAP 2.1 (8.2) says they are, because the
+// remedies differ by a whole key: 0x34 (CTAP2_ERR_PIN_AUTH_BLOCKED) "Requires
+// power cycle to reset", 0x32 (CTAP2_ERR_PIN_BLOCKED) is the retry counter run
+// out, lifted only by a reset that erases every credential. v0.6.1 had the two
+// sentences the other way round.
+func TestThePINLockoutsSayWhatLiftsThem(t *testing.T) {
+	if got := Status(0x34).String(); !strings.Contains(got, "unplug the key") || strings.Contains(got, "reset") {
+		t.Errorf("0x34 = %q, want: unplug and plug in again", got)
+	}
+	if got := Status(0x32).String(); !strings.Contains(got, "only a reset") || strings.Contains(got, "unplug") {
+		t.Errorf("0x32 = %q, want: blocked, only a reset lifts it", got)
+	}
+}
