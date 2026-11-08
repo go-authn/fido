@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,6 +29,12 @@ type pinAuthenticator struct {
 	retries int
 	// asked records the subcommands it was sent, in order.
 	asked []int
+	// perms, rpID and keys are what the last token request carried: the
+	// permissions and RP id read at the keys CTAP 2.1 numbers them, and every
+	// key of the request map.
+	perms uint64
+	rpID  string
+	keys  []uint64
 }
 
 func newPINAuthenticator(t *testing.T, pin string) *pinAuthenticator {
@@ -77,6 +84,26 @@ func (a *pinAuthenticator) reply(cmd byte, params []byte) []byte {
 		return append([]byte{byte(StatusOK)}, b...)
 
 	case subGetPINToken, subGetTokenUsingPIN:
+		a.keys = a.keys[:0]
+		for k := range req {
+			a.keys = append(a.keys, k)
+		}
+		slices.Sort(a.keys)
+		if sub == subGetTokenUsingPIN {
+			// The keys as CTAP 2.1 (6.5.5) numbers them, written out rather than
+			// taken from the constants under test: permissions at 0x09,
+			// required, and the RP id at 0x0A. An authenticator that finds no
+			// permissions there answers CTAP2_ERR_MISSING_PARAMETER.
+			if err := cbor.Unmarshal(req[0x09], &a.perms); err != nil {
+				return []byte{0x14}
+			}
+			a.rpID = ""
+			if raw, ok := req[0x0A]; ok {
+				if err := cbor.Unmarshal(raw, &a.rpID); err != nil {
+					return []byte{0x11} // CTAP2_ERR_CBOR_UNEXPECTED_TYPE
+				}
+			}
+		}
 		// Agree from the authenticator's side, then check the PIN the way a
 		// real one does: decrypt the hash and compare.
 		var cose cbor.RawMessage
@@ -172,6 +199,9 @@ func TestAPINBuysAToken(t *testing.T) {
 				t.Errorf("the token was asked for with subcommand %d, want %d", last, subGetTokenUsingPIN)
 			}
 			// And the parameter it produces has the protocol's length.
+			if a.perms != uint64(PermGetAssertion) || a.rpID != "example.test" {
+				t.Errorf("the authenticator read permissions %#x and RP id %q", a.perms, a.rpID)
+			}
 			want := 16
 			if proto == PINProtocolTwo {
 				want = 32
@@ -183,7 +213,39 @@ func TestAPINBuysAToken(t *testing.T) {
 	}
 }
 
-// TestNoPermissionsAsksTheOlderWay: sending permissions of zero is not the
+// TestTokenRequestKeysAreTheSpecificationsTable checks the CBOR map keys of
+// both token requests against the table of CTAP 2.1 section 6.5.5
+// (authenticatorClientPIN input parameters): pinUvAuthProtocol 0x01,
+// subCommand 0x02, keyAgreement 0x03, pinUvAuthParam 0x04, newPinEnc 0x05,
+// pinHashEnc 0x06, permissions 0x09, rpId 0x0A. There is no 0x07 or 0x08, so
+// nothing else may be there; getPinUvAuthTokenUsingPinWithPermissions
+// (6.5.5.7.2) sends protocol, subCommand, keyAgreement, pinHashEnc,
+// permissions and, when asked, rpId.
+func TestTokenRequestKeysAreTheSpecificationsTable(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		perms Permissions
+		rpID  string
+		want  []uint64
+	}{
+		{"with permissions and RP id", PermGetAssertion, "example.test", []uint64{0x01, 0x02, 0x03, 0x06, 0x09, 0x0A}},
+		{"with permissions only", PermMakeCredential, "", []uint64{0x01, 0x02, 0x03, 0x06, 0x09}},
+		{"the CTAP 2.0 way", 0, "", []uint64{0x01, 0x02, 0x03, 0x06}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := newPINAuthenticator(t, "1234")
+			k := ctap2Key(t, CapCBOR, a.reply)
+			if _, err := k.PINToken(context.Background(), "1234", PINProtocolOne, c.perms, c.rpID); err != nil {
+				t.Fatalf("PINToken: %v", err)
+			}
+			if !slices.Equal(a.keys, c.want) {
+				t.Errorf("the request carried keys %#x, the specification's table gives %#x", a.keys, c.want)
+			}
+		})
+	}
+}
+
+// TestNoPermissionsAsksTheOlderWay:sending permissions of zero is not the
 // same request as sending none, and some authenticators refuse it.
 func TestNoPermissionsAsksTheOlderWay(t *testing.T) {
 	a := newPINAuthenticator(t, "1234")
