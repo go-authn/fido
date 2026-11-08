@@ -106,6 +106,11 @@ and the signature verified against the public key the key itself handed out.
 and `PINToken`, and a token wires into `MakeCredential` and `GetAssertion` to
 turn "somebody touched the key" into "somebody who knows its PIN touched it".
 
+`PINToken` with permissions sends the permissions at key 0x09 and the RP id at 0x0A, as
+CTAP 2.1 (6.5.5) numbers them; before v0.6.4 it used 0x07 and 0x08, which a
+YubiKey answers with `CTAP2_ERR_MISSING_PARAMETER`. A test checks the request's
+map keys against the specification's table.
+
 The two protocols are not a version number. Protocol one hashes the ECDH output
 once and uses the same 32 bytes as both AES and HMAC key, with a zero
 initialisation vector and a 16-byte truncated HMAC; protocol two derives two

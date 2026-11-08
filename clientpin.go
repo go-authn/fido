@@ -32,7 +32,10 @@ const (
 	subGetTokenUsingPIN = 0x09
 )
 
-// The clientPIN parameter keys.
+// The clientPIN parameter keys (CTAP 2.1, 6.5.5). Note the gap here too: a
+// request has no keys 0x07 and 0x08; permissions is 0x09 and rpId 0x0A, where
+// libfido2 and python-fido2 send them. A YubiKey answers anything else with
+// CTAP2_ERR_MISSING_PARAMETER.
 const (
 	cpProtocol       = 0x01
 	cpSubCommand     = 0x02
@@ -40,8 +43,8 @@ const (
 	cpPinUvAuthParam = 0x04
 	cpNewPinEnc      = 0x05
 	cpPinHashEnc     = 0x06
-	cpPermissions    = 0x07
-	cpRPID           = 0x08
+	cpPermissions    = 0x09
+	cpRPID           = 0x0A
 
 	cpRespKeyAgreement = 0x01
 	cpRespToken        = 0x02
