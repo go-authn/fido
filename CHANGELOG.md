@@ -13,7 +13,7 @@
 - Added: `credProtect` (12.1), policies 1, 2 and 3.
 - Added: `Key.UVToken`, getPinUvAuthTokenUsingUvWithPermissions (6.5.5.7.3,
   subcommand 0x06), `Key.UVRetries`, `Key.SelectPINProtocol`, the remaining
-  permission constants, and the names of statuses 0x3e and 0x3f.
+  permission constants, and the names of statuses 0x3c, 0x3e and 0x3f.
 - Tests: a software CTAP 2.1 authenticator written from the specification
   (virtual_test.go) reproduces two traps: the unverified hmac-secret is another
   secret, and a credProtect 3 credential answers "no credentials" to an

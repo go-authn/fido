@@ -315,6 +315,14 @@ func TestUVToken(t *testing.T) {
 		if !slices.Equal(v.asked, []string{"clientPIN/2", "clientPIN/6"}) {
 			t.Errorf("commands: %v", v.asked)
 		}
+		var keys []uint64
+		for key := range v.lastTokenReq {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		if !slices.Equal(keys, []uint64{0x01, 0x02, 0x03, 0x09, 0x0A}) {
+			t.Errorf("request keys %v, want protocol, subcommand, keyAgreement, permissions 9, rpId 10", keys)
+		}
 		// The token authorises a registration.
 		att, _ := register(t, k, v, Extensions{}, tok)
 		if !att.Parsed.Flags.Has(FlagUV) {

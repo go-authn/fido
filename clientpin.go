@@ -267,8 +267,8 @@ func (k *Key) UVRetries(ctx context.Context) (int, error) {
 	if err := k.ctap2Ready(); err != nil {
 		return 0, err
 	}
+	// CTAP 2.1 6.5.5.3: getUVRetries takes the subcommand alone.
 	body, err := k.cborCall(ctx, CmdClientPIN, map[int]any{
-		cpProtocol:   int(PINProtocolOne),
 		cpSubCommand: subGetUVRetries,
 	})
 	if err != nil {

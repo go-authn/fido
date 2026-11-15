@@ -291,11 +291,11 @@ func (k *Key) GetAssertion(ctx context.Context, r GetAssertionRequest) (*Asserti
 	for id, v := range r.Extensions {
 		ext[id] = v
 	}
+	if _, raw := ext[extHMACSecret]; raw {
+		return nil, fmt.Errorf("fido: hmac-secret goes in GetAssertionRequest.HMACSecret, not in Extensions")
+	}
 	var hm *hmacSession
 	if r.HMACSecret != nil {
-		if _, dup := ext[extHMACSecret]; dup {
-			return nil, fmt.Errorf("fido: hmac-secret is set twice")
-		}
 		in, s, err := k.hmacInput(ctx, *r.HMACSecret, r.Token)
 		if err != nil {
 			return nil, err

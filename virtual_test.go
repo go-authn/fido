@@ -24,9 +24,12 @@ import (
 // makeCredential/getAssertion with hmac-secret and credProtect.
 //
 // It is written from the specification (CTAP 2.1: 6.1, 6.2, 6.5, 12.1, 12.5),
-// NOT from this package's code: its token check, salt check and secret
-// derivation use crypto primitives directly, so a mistake in the package cannot
-// be echoed back by a fake that shares it. The two behaviours that silently
+// NOT from this package's code: its token check, salt MAC, HKDF and secret
+// derivation use crypto primitives directly, so a mistake there cannot be
+// echoed back by a fake that shares it. What it DOES share is the AES-256-CBC
+// step (pinCrypt) and the CTAP2 CBOR encoder, and the parameter-number
+// constants; those are covered by the existing tests and by the real-key test.
+// The two behaviours that silently
 // ruin a disk unlock are reproduced on purpose:
 //
 //   - hmac-secret derives from CredRandomWithUV when the request was verified
@@ -54,6 +57,8 @@ type virtualAuthenticator struct {
 	// lastGAExt holds the extensions map of the last getAssertion, as sent.
 	lastGAExt map[string]cbor.RawMessage
 	lastMCExt map[string]cbor.RawMessage
+	// lastTokenReq is the last token request, every key of it.
+	lastTokenReq map[uint64]cbor.RawMessage
 	// tamper, when set, rewrites the encrypted hmac-secret output.
 	tamper func(proto int, aesKey, enc []byte) []byte
 }
@@ -217,6 +222,7 @@ func (v *virtualAuthenticator) clientPIN(params []byte) []byte {
 			1: 2, 3: -25, -1: 1, -2: pub[1:33], -3: pub[33:],
 		}})
 	case subGetPINToken, subGetTokenUsingPIN, subGetTokenUsingUV:
+		v.lastTokenReq = req
 		aesKey, _, ok := v.shared(proto, req[cpKeyAgreement])
 		if !ok {
 			return v.fail(0x02)
@@ -233,7 +239,7 @@ func (v *virtualAuthenticator) clientPIN(params []byte) []byte {
 		}
 		if sub == subGetTokenUsingUV {
 			if v.uvRetries == 0 {
-				return v.fail(0x3E) // CTAP2_ERR_UV_BLOCKED
+				return v.fail(0x3C) // CTAP2_ERR_UV_BLOCKED (0x3E is INVALID_SUBCOMMAND)
 			}
 			if !v.finger {
 				v.uvRetries--
