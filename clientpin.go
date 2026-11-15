@@ -62,6 +62,11 @@ type Permissions uint
 const (
 	PermMakeCredential Permissions = 0x01
 	PermGetAssertion   Permissions = 0x02
+	// The others CTAP 2.1 (6.5.5.7) defines, named so a caller can ask for them.
+	PermCredentialManagement Permissions = 0x04
+	PermBioEnrollment        Permissions = 0x08
+	PermLargeBlobWrite       Permissions = 0x10
+	PermAuthenticatorConfig  Permissions = 0x20
 )
 
 // Retries is what an authenticator says about how many attempts are left.
@@ -213,6 +218,75 @@ func (k *Key) PINToken(ctx context.Context, pin string, proto PINProtocol, perms
 			cpPinHashEnc:   hashEnc,
 		}
 	}
+	return k.tokenExchange(ctx, proto, keys, req)
+}
+
+// UVToken obtains a token by built-in user verification, such as a fingerprint
+// sensor on the key: getPinUvAuthTokenUsingUvWithPermissions (CTAP 2.1, 6.5.5.7.3,
+// subcommand 0x06).
+//
+// The call blocks while the authenticator waits for the person, sending
+// keepalives that the transport skips; the context is the only bound, so give
+// it one. perms must name at least one permission, and rpID narrows them as in
+// [Key.PINToken]. An authenticator without built-in UV, or one that does not
+// list "pinUvAuthToken", answers with an error: read [Info.Options] ("uv",
+// "pinUvAuthToken") first.
+//
+// A refused verification costs a UV retry; [Key.UVRetries] says how many are
+// left, and when they run out the authenticator asks for the PIN instead.
+func (k *Key) UVToken(ctx context.Context, proto PINProtocol, perms Permissions, rpID string) (Token, error) {
+	if err := k.ctap2Ready(); err != nil {
+		return Token{}, err
+	}
+	if perms == 0 {
+		return Token{}, fmt.Errorf("fido: a token by user verification needs at least one permission")
+	}
+	pub, err := k.KeyAgreement(ctx, proto)
+	if err != nil {
+		return Token{}, err
+	}
+	ownCOSE, keys, err := agree(proto, pub)
+	if err != nil {
+		return Token{}, err
+	}
+	req := map[int]any{
+		cpProtocol:     int(proto),
+		cpSubCommand:   subGetTokenUsingUV,
+		cpKeyAgreement: ownCOSE,
+		cpPermissions:  uint(perms),
+	}
+	if rpID != "" {
+		req[cpRPID] = rpID
+	}
+	return k.tokenExchange(ctx, proto, keys, req)
+}
+
+// UVRetries asks how many built-in verification attempts remain (subcommand
+// 0x07). It needs no verification.
+func (k *Key) UVRetries(ctx context.Context) (int, error) {
+	if err := k.ctap2Ready(); err != nil {
+		return 0, err
+	}
+	body, err := k.cborCall(ctx, CmdClientPIN, map[int]any{
+		cpProtocol:   int(PINProtocolOne),
+		cpSubCommand: subGetUVRetries,
+	})
+	if err != nil {
+		return 0, err
+	}
+	var raw map[uint64]cbor.RawMessage
+	if err := cbor.Unmarshal(body, &raw); err != nil {
+		return 0, fmt.Errorf("fido: the UV retry count is not a CBOR map: %w", err)
+	}
+	var n int
+	if err := field(raw, cpRespUVRetries, &n, "UV retry count"); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// tokenExchange sends a token request and decrypts the token it answers with.
+func (k *Key) tokenExchange(ctx context.Context, proto PINProtocol, keys pinKeys, req map[int]any) (Token, error) {
 	body, err := k.cborCall(ctx, CmdClientPIN, req)
 	if err != nil {
 		return Token{}, err

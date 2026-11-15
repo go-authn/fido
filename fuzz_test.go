@@ -83,3 +83,50 @@ func FuzzAgreementKey(f *testing.F) {
 		_, _ = coseToECDH(cbor.RawMessage(b))
 	})
 }
+
+func FuzzExtensionOutputs(f *testing.F) {
+	for _, m := range []map[string]any{
+		{"hmac-secret": true, "credProtect": uint(3)},
+		{"hmac-secret": []byte("0123456789abcdef0123456789abcdef")},
+		{"credProtect": "three"},
+		{"unknown": []any{1, "x"}},
+	} {
+		b, err := cbor.Marshal(m)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(b)
+	}
+	f.Add([]byte{0xa1, 0x6b, 'h', 'm', 'a', 'c', '-', 's', 'e', 'c', 'r', 'e', 't', 0xa1, 0xa1, 0x01, 0x01, 0x02})
+	f.Fuzz(func(t *testing.T, b []byte) {
+		o, err := AuthData{Extensions: b}.ExtensionOutputs()
+		if err == nil && o.HMACSecret && o.hmacEnc != nil {
+			t.Fatal("hmac-secret read as both a flag and a ciphertext")
+		}
+	})
+}
+
+// FuzzHMACSecretOutput feeds the decryption of an assertion's hmac-secret
+// output whatever a key could send: it must refuse or return exactly one or two
+// 32-byte secrets.
+func FuzzHMACSecretOutput(f *testing.F) {
+	f.Add(make([]byte, 32), uint8(1), true)
+	f.Add(make([]byte, 48), uint8(2), true)
+	f.Add(make([]byte, 64), uint8(2), false)
+	f.Add([]byte{}, uint8(1), false)
+	f.Fuzz(func(t *testing.T, enc []byte, salts uint8, v2 bool) {
+		proto := PINProtocolOne
+		if v2 {
+			proto = PINProtocolTwo
+		}
+		s := &hmacSession{keys: pinKeys{proto: proto, aes: make([]byte, 32), hmac: make([]byte, 32)}, salts: int(salts%2) + 1}
+		a := &Assertion{Extensions: ExtensionOutputs{hmacEnc: enc}}
+		out, err := s.output(a)
+		if err != nil {
+			return
+		}
+		if len(out.First) != 32 || (s.salts == 2) != (len(out.Second) == 32) {
+			t.Fatalf("secrets of %d and %d bytes for %d salt(s)", len(out.First), len(out.Second), s.salts)
+		}
+	})
+}

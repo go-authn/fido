@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("\xa1khmac-secret\xa1\xa1\x01\x01\x02")
