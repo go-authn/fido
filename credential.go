@@ -78,6 +78,8 @@ type MakeCredentialRequest struct {
 	// it is the only way to get the verified bit set on an authenticator whose
 	// verification IS a PIN.
 	Token Token
+	// Extensions are the extension inputs, such as hmac-secret and credProtect.
+	Extensions Extensions
 }
 
 // Attestation is what a registration returns.
@@ -92,6 +94,8 @@ type Attestation struct {
 	// Statement is the attestation statement, left as CBOR: verifying it means
 	// choosing a certificate library, and that choice is not this package's.
 	Statement cbor.RawMessage
+	// Extensions are the extension outputs the authenticator reported.
+	Extensions ExtensionOutputs
 }
 
 // GetAssertionRequest asks an authenticator to prove it holds a credential.
@@ -106,6 +110,13 @@ type GetAssertionRequest struct {
 	// Token, when valid, authorises the request. See
 	// [MakeCredentialRequest.Token].
 	Token Token
+	// HMACSecret, when set, asks for the hmac-secret output (CTAP 2.1, 12.5).
+	// Obtain the Token FIRST when the credential has credProtect level 3: an
+	// unverified probe is answered "no credentials" by the right key.
+	HMACSecret *HMACSecret
+	// Extensions are further extension inputs, encoded as given. A key
+	// "hmac-secret" here is an error: use [GetAssertionRequest.HMACSecret].
+	Extensions map[string]any
 }
 
 // Assertion is what an authenticator answers with.
@@ -124,6 +135,10 @@ type Assertion struct {
 	// Available is how many credentials could have answered, when the
 	// authenticator said. More than one means the caller may ask for the next.
 	Available uint
+	// Extensions are the extension outputs the authenticator reported.
+	Extensions ExtensionOutputs
+	// HMACSecret is the decrypted hmac-secret output, when it was asked for.
+	HMACSecret *HMACSecretOutput
 }
 
 // The parameter keys, as the specification numbers them.
@@ -133,6 +148,7 @@ const (
 	mcUser              = 0x03
 	mcPubKeyCredParams  = 0x04
 	mcExcludeList       = 0x05
+	mcExtensions        = 0x06
 	mcOptions           = 0x07
 	mcPinUvAuthParam    = 0x08
 	mcPinUvAuthProtocol = 0x09
@@ -144,6 +160,7 @@ const (
 	gaRPID              = 0x01
 	gaClientDataHash    = 0x02
 	gaAllowList         = 0x03
+	gaExtensions        = 0x04
 	gaOptions           = 0x05
 	gaPinUvAuthParam    = 0x06
 	gaPinUvAuthProtocol = 0x07
@@ -201,6 +218,13 @@ func (k *Key) MakeCredential(ctx context.Context, r MakeCredentialRequest) (*Att
 	if len(r.Exclude) > 0 {
 		req[mcExcludeList] = descriptors(r.Exclude)
 	}
+	ext, err := r.Extensions.encode()
+	if err != nil {
+		return nil, err
+	}
+	if ext != nil {
+		req[mcExtensions] = ext
+	}
 	if len(r.Options) > 0 {
 		req[mcOptions] = r.Options
 	}
@@ -239,6 +263,9 @@ func (k *Key) MakeCredential(ctx context.Context, r MakeCredentialRequest) (*Att
 	if r, ok := raw[mcRespAttStmt]; ok {
 		att.Statement = r
 	}
+	if att.Extensions, err = att.Parsed.ExtensionOutputs(); err != nil {
+		return nil, err
+	}
 	return &att, nil
 }
 
@@ -259,6 +286,24 @@ func (k *Key) GetAssertion(ctx context.Context, r GetAssertionRequest) (*Asserti
 	}
 	if len(r.Allow) > 0 {
 		req[gaAllowList] = descriptors(r.Allow)
+	}
+	ext := map[string]any{}
+	for id, v := range r.Extensions {
+		ext[id] = v
+	}
+	if _, raw := ext[extHMACSecret]; raw {
+		return nil, fmt.Errorf("fido: hmac-secret goes in GetAssertionRequest.HMACSecret, not in Extensions")
+	}
+	var hm *hmacSession
+	if r.HMACSecret != nil {
+		in, s, err := k.hmacInput(ctx, *r.HMACSecret, r.Token)
+		if err != nil {
+			return nil, err
+		}
+		ext[extHMACSecret], hm = in, s
+	}
+	if len(ext) > 0 {
+		req[gaExtensions] = ext
 	}
 	if len(r.Options) > 0 {
 		req[gaOptions] = r.Options
@@ -317,6 +362,14 @@ func (k *Key) GetAssertion(ctx context.Context, r GetAssertionRequest) (*Asserti
 	if m, ok := raw[gaRespAvailable]; ok {
 		if err := cbor.Unmarshal(m, &a.Available); err != nil {
 			return nil, fmt.Errorf("fido: the assertion's credential count: %w", err)
+		}
+	}
+	if a.Extensions, err = a.Parsed.ExtensionOutputs(); err != nil {
+		return nil, err
+	}
+	if hm != nil {
+		if a.HMACSecret, err = hm.output(&a); err != nil {
+			return nil, err
 		}
 	}
 	return &a, nil

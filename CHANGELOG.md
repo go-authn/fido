@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.7.0
+
+- Added: the `extensions` parameter of makeCredential (`Extensions`) and
+  getAssertion (`GetAssertionRequest.Extensions`), and the extension outputs of
+  the authenticator data (`AuthData.ExtensionOutputs`).
+- Added: `hmac-secret` (CTAP 2.1, 12.5) under both PIN/UV auth protocols, one or
+  two salts (`GetAssertionRequest.HMACSecret`, `Assertion.HMACSecret`).
+  `HMACSecret.RequireUV` refuses to return a secret the authenticator derived
+  without user verification, which is a different secret and is otherwise
+  indistinguishable. Salts, protocol and policy are the caller's.
+- Added: `credProtect` (12.1), policies 1, 2 and 3.
+- Added: `Key.UVToken`, getPinUvAuthTokenUsingUvWithPermissions (6.5.5.7.3,
+  subcommand 0x06), `Key.UVRetries`, `Key.SelectPINProtocol`, the remaining
+  permission constants, and the names of statuses 0x3c, 0x3e and 0x3f.
+- Tests: a software CTAP 2.1 authenticator written from the specification
+  (virtual_test.go) reproduces two traps: the unverified hmac-secret is another
+  secret, and a credProtect 3 credential answers "no credentials" to an
+  unverified probe. New fuzz targets with a committed corpus.
+
 ## v0.6.4
 
 - Fixed: `PINToken` with permissions sent `permissions` under key 0x07 and

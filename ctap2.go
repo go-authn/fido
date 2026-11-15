@@ -63,6 +63,9 @@ var statusNames = map[Status]string{
 	0x35: "no PIN is set on this authenticator",
 	0x36: "a PIN is required and none was given",
 	0x37: "the PIN does not meet the authenticator's policy",
+	0x3c: "built-in user verification is blocked; the PIN must be used",
+	0x3e: "the clientPIN subcommand is not one this authenticator knows",
+	0x3f: "built-in user verification did not match",
 	0x3a: "the person did not touch the key in time",
 	0x3b: "the key needs to be touched",
 }

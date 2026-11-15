@@ -123,3 +123,26 @@ The status-code table comes from libfido2's `err.h`, and it had to: an earlier
 version was written from memory and five of its entries were wrong. A real key
 caught it by answering `0x35` -- no PIN set -- which the table did not name
 while claiming `0x2F` meant that.
+
+## Extensions, hmac-secret, credProtect and built-in verification
+
+`MakeCredentialRequest.Extensions` and `GetAssertionRequest.Extensions` carry
+the `extensions` parameter, and `AuthData.ExtensionOutputs` reads what comes
+back. `hmac-secret` (CTAP 2.1, 12.5) works under both PIN/UV auth protocols:
+register with `Extensions{HMACSecret: true}`, then ask for one or two secrets
+with `GetAssertionRequest.HMACSecret` (32-byte salts) and read
+`Assertion.HMACSecret`. `credProtect` takes the policies 1, 2 and 3.
+
+`Key.UVToken` obtains a pinUvAuthToken by built-in user verification, such as a
+fingerprint sensor (getPinUvAuthTokenUsingUvWithPermissions, subcommand 0x06);
+`Key.PINToken` is the PIN alternative, and either token goes into the same
+request.
+
+Two traps are covered by tests against a software authenticator written from
+the specification (and, with `FIDO_REAL=1`, by go-macos/fido's test on a real
+key): an authenticator derives a DIFFERENT hmac-secret for a verified request
+than for an unverified one, with nothing in the output to tell them apart, so
+`HMACSecret.RequireUV` refuses to return the unverified one; and a credProtect 3
+credential answers "no credentials" to a probe made before verification, so
+verify first. Which salts, which protocol, and whether a PIN is accepted in
+place of a finger are the caller's choices; this package encodes and decodes.
