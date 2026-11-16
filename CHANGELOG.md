@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.0
+
+- Added: `StatusError`. A refused CTAP2 command now returns `*StatusError`,
+  so `errors.As` gives its `Status` instead of the caller matching text. The
+  message is unchanged. Named statuses: `StatusOperationDenied`,
+  `StatusNoCredentials`, `StatusUserActionTimeout`, `StatusPINInvalid`,
+  `StatusPINBlocked`, `StatusPINAuthBlocked`.
+
 ## v0.8.0
 
 - Added: `Key.GetAssertions` and `CmdGetNextAssertion` (0x08). One getAssertion

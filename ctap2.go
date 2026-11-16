@@ -29,6 +29,27 @@ type Status byte
 // StatusOK means the authenticator did what was asked.
 const StatusOK Status = 0x00
 
+// Statuses a caller commonly acts on, named so that errors.As against a
+// StatusError can be compared with a name instead of a number (CTAP 2.1
+// §8.2; the values are those of statusNames below).
+const (
+	StatusOperationDenied   Status = 0x27 // the person refused, or (YubiKey) did not touch in time
+	StatusNoCredentials     Status = 0x2e
+	StatusUserActionTimeout Status = 0x2f
+	StatusPINInvalid        Status = 0x31
+	StatusPINBlocked        Status = 0x32
+	StatusPINAuthBlocked    Status = 0x34
+)
+
+// StatusError is a CTAP2 command the authenticator refused. Use errors.As to
+// read the Status; the message is the one this package always gave.
+type StatusError struct {
+	Key    string // the transport's name for the key
+	Status Status
+}
+
+func (e *StatusError) Error() string { return fmt.Sprintf("fido: %s: %s", e.Key, e.Status) }
+
 // The status codes worth naming: the ones a caller can act on. The rest are
 // rendered as their number, because inventing a name for a code this package
 // has never seen would be a guess dressed as documentation.
@@ -180,7 +201,7 @@ func (k *Key) CBOR(ctx context.Context, cmd byte, params []byte) ([]byte, error)
 		return nil, fmt.Errorf("fido: %s answered a CTAP2 command with nothing at all", k.t.Name())
 	}
 	if s := Status(reply[0]); s.Error() {
-		return nil, fmt.Errorf("fido: %s: %s", k.t.Name(), s)
+		return nil, &StatusError{Key: k.t.Name(), Status: s}
 	}
 	return reply[1:], nil
 }
