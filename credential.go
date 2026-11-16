@@ -15,6 +15,8 @@ import (
 const (
 	CmdMakeCredential byte = 0x01
 	CmdGetAssertion   byte = 0x02
+	// CmdGetNextAssertion is authenticatorGetNextAssertion (CTAP 2.1 §6.3).
+	CmdGetNextAssertion byte = 0x08
 )
 
 // AlgES256 is the COSE identifier for ECDSA over P-256 with SHA-256. It is the
@@ -271,14 +273,67 @@ func (k *Key) MakeCredential(ctx context.Context, r MakeCredentialRequest) (*Att
 
 // GetAssertion asks the authenticator to sign, proving it holds the credential.
 func (k *Key) GetAssertion(ctx context.Context, r GetAssertionRequest) (*Assertion, error) {
-	if err := k.ctap2Ready(); err != nil {
+	a, _, err := k.getAssertion(ctx, r)
+	return a, err
+}
+
+// GetAssertions asks for an assertion and then for every further one the
+// authenticator announced (numberOfCredentials, CTAP 2.1 §6.2), with
+// authenticatorGetNextAssertion (0x08, §6.3). This is how a request with an
+// empty Allow list reaches every discoverable credential of the relying
+// party, newest first, for ONE gesture: §6.3 collects no user presence of its
+// own. The authenticator keeps the list for 30 seconds between commands.
+//
+// max bounds the answer: an authenticator announcing more than max
+// credentials is refused before any further command, because the count is
+// the authenticator's word. An authenticator with a display may instead let
+// the person pick one, and then announces none (§6.2.2, step 12).
+//
+// §6.3 does not say whether a next assertion carries extension outputs. An
+// hmac-secret output found in one is decrypted with the FIRST request's
+// session, which is the only one there is; a next assertion WITHOUT one has
+// a nil HMACSecret, not an error, so the caller sees what the authenticator
+// actually does.
+func (k *Key) GetAssertions(ctx context.Context, r GetAssertionRequest, max int) ([]*Assertion, error) {
+	if max < 1 {
+		return nil, fmt.Errorf("fido: GetAssertions needs a bound of at least 1, not %d", max)
+	}
+	first, hm, err := k.getAssertion(ctx, r)
+	if err != nil {
 		return nil, err
 	}
+	n := first.Available
+	if n == 0 {
+		n = 1
+	}
+	if n > uint(max) {
+		return nil, fmt.Errorf("fido: the authenticator announces %d credentials, more than the %d asked for", n, max)
+	}
+	out := make([]*Assertion, 0, n)
+	out = append(out, first)
+	for uint(len(out)) < n {
+		body, err := k.CBOR(ctx, CmdGetNextAssertion, nil)
+		if err != nil {
+			return nil, fmt.Errorf("fido: next assertion %d of %d: %w", len(out)+1, n, err)
+		}
+		a, err := parseAssertion(body, hm, true)
+		if err != nil {
+			return nil, fmt.Errorf("fido: next assertion %d of %d: %w", len(out)+1, n, err)
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+func (k *Key) getAssertion(ctx context.Context, r GetAssertionRequest) (*Assertion, *hmacSession, error) {
+	if err := k.ctap2Ready(); err != nil {
+		return nil, nil, err
+	}
 	if r.RPID == "" {
-		return nil, fmt.Errorf("fido: an assertion needs a relying party id")
+		return nil, nil, fmt.Errorf("fido: an assertion needs a relying party id")
 	}
 	if len(r.ClientDataHash) == 0 {
-		return nil, fmt.Errorf("fido: an assertion needs a client data hash to sign over")
+		return nil, nil, fmt.Errorf("fido: an assertion needs a client data hash to sign over")
 	}
 	req := map[int]any{
 		gaRPID:           r.RPID,
@@ -292,13 +347,13 @@ func (k *Key) GetAssertion(ctx context.Context, r GetAssertionRequest) (*Asserti
 		ext[id] = v
 	}
 	if _, raw := ext[extHMACSecret]; raw {
-		return nil, fmt.Errorf("fido: hmac-secret goes in GetAssertionRequest.HMACSecret, not in Extensions")
+		return nil, nil, fmt.Errorf("fido: hmac-secret goes in GetAssertionRequest.HMACSecret, not in Extensions")
 	}
 	var hm *hmacSession
 	if r.HMACSecret != nil {
 		in, s, err := k.hmacInput(ctx, *r.HMACSecret, r.Token)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ext[extHMACSecret], hm = in, s
 	}
@@ -314,8 +369,18 @@ func (k *Key) GetAssertion(ctx context.Context, r GetAssertionRequest) (*Asserti
 	}
 	body, err := k.cborCall(ctx, CmdGetAssertion, req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	a, err := parseAssertion(body, hm, false)
+	return a, hm, err
+}
+
+// parseAssertion decodes a getAssertion or getNextAssertion reply (§6.2,
+// §6.3: the same structure, without numberOfCredentials for the second).
+// For a next assertion, an absent hmac-secret output is reported as a nil
+// HMACSecret rather than an error, because §6.3 does not promise one.
+func parseAssertion(body []byte, hm *hmacSession, next bool) (*Assertion, error) {
+	var err error
 
 	var raw map[uint64]cbor.RawMessage
 	if err := cbor.Unmarshal(body, &raw); err != nil {
@@ -367,7 +432,7 @@ func (k *Key) GetAssertion(ctx context.Context, r GetAssertionRequest) (*Asserti
 	if a.Extensions, err = a.Parsed.ExtensionOutputs(); err != nil {
 		return nil, err
 	}
-	if hm != nil {
+	if hm != nil && !(next && a.Extensions.hmacEnc == nil) {
 		if a.HMACSecret, err = hm.output(&a); err != nil {
 			return nil, err
 		}
