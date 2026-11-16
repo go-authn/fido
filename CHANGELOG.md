@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.0
+
+- Added: `Key.GetAssertions` and `CmdGetNextAssertion` (0x08). One getAssertion
+  then authenticatorGetNextAssertion for every further credential announced
+  (CTAP 2.1 §6.3), newest first, bounded by the caller. A next assertion's
+  hmac-secret output is decrypted with the first request's session when it is
+  present, and is nil when absent (§6.3 does not promise it).
+- Tests: the software authenticator walks its list, in both behaviours (with
+  and without outputs on next assertions), and lies about its count.
+
 ## v0.7.0
 
 - Added: the `extensions` parameter of makeCredential (`Extensions`) and

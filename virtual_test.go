@@ -61,6 +61,18 @@ type virtualAuthenticator struct {
 	lastTokenReq map[uint64]cbor.RawMessage
 	// tamper, when set, rewrites the encrypted hmac-secret output.
 	tamper func(proto int, aesKey, enc []byte) []byte
+
+	// The list kept by the last discoverable getAssertion (§6.3).
+	pending    []*virtualCredential
+	pendingRP  string
+	pendingCDH []byte
+	pendingUV  bool
+	pendingHS  cbor.RawMessage
+	// nextHMAC: whether getNextAssertion carries the hmac-secret output
+	// (the specification is silent, so both are tested).
+	nextHMAC bool
+	// announce, when > 0, overrides numberOfCredentials (a lying key).
+	announce int
 }
 
 type virtualCredential struct {
@@ -119,6 +131,9 @@ func (v *virtualAuthenticator) reply(cmd byte, params []byte) []byte {
 	case CmdGetAssertion:
 		v.asked = append(v.asked, "getAssertion")
 		return v.getAssertion(params)
+	case CmdGetNextAssertion:
+		v.asked = append(v.asked, "getNextAssertion")
+		return v.getNextAssertion()
 	}
 	return v.fail(0x01)
 }
@@ -395,8 +410,10 @@ func (v *virtualAuthenticator) getAssertion(params []byte) []byte {
 
 	// 12.1: a credential is used only as its protection policy allows. The
 	// refusal is the same status as for a credential that does not exist.
-	var cred *virtualCredential
-	for _, c := range v.creds {
+	// §6.2.2 step 12.2.1: the applicable credentials, newest first.
+	var matches []*virtualCredential
+	for i := len(v.creds) - 1; i >= 0; i-- {
+		c := v.creds[i]
 		if c.rp != rp {
 			continue
 		}
@@ -417,29 +434,68 @@ func (v *virtualAuthenticator) getAssertion(params []byte) []byte {
 		case c.protect == 2 && !uv && !named:
 			continue
 		}
-		cred = c
-		break
+		matches = append(matches, c)
 	}
-	if cred == nil {
+	if len(matches) == 0 {
 		return v.fail(0x2E)
 	}
 
-	var ext map[string]any
+	var hs cbor.RawMessage
 	if raw, ok := req[gaExtensions]; ok {
 		var in map[string]cbor.RawMessage
 		if err := cbor.Unmarshal(raw, &in); err != nil {
 			return v.fail(0x11)
 		}
 		v.lastGAExt = in
-		if hs, ok := in["hmac-secret"]; ok && cred.hmac {
-			out, status := v.hmacSecret(hs, cred, uv)
-			if status != 0 {
-				return v.fail(status)
-			}
-			ext = map[string]any{"hmac-secret": out}
-		}
+		hs = in["hmac-secret"]
 	}
+	resp, status := v.assertion(matches[0], rp, cdh, uv, hs, len(allow) == 0)
+	if status != 0 {
+		return v.fail(status)
+	}
+	// Only a discoverable request walks the list (§6.2.2 step 12.2).
+	v.pending, v.pendingRP, v.pendingCDH, v.pendingUV, v.pendingHS = nil, rp, cdh, uv, hs
+	if len(allow) == 0 && len(matches) > 1 {
+		v.pending = matches[1:]
+		resp[gaRespAvailable] = len(matches)
+	}
+	if v.announce > 0 {
+		resp[gaRespAvailable] = v.announce
+	}
+	return v.ok(resp)
+}
 
+// getNextAssertion is §6.3: the next credential of the list kept by the last
+// getAssertion, with no gesture of its own. Whether it carries the
+// hmac-secret output is not said by the specification: nextHMAC chooses.
+func (v *virtualAuthenticator) getNextAssertion() []byte {
+	v.t.Helper()
+	if len(v.pending) == 0 {
+		return v.fail(0x30) // CTAP2_ERR_NOT_ALLOWED
+	}
+	c := v.pending[0]
+	v.pending = v.pending[1:]
+	var hs cbor.RawMessage
+	if v.nextHMAC {
+		hs = v.pendingHS
+	}
+	resp, status := v.assertion(c, v.pendingRP, v.pendingCDH, v.pendingUV, hs, true)
+	if status != 0 {
+		return v.fail(status)
+	}
+	return v.ok(resp)
+}
+
+// assertion builds one assertion reply for credential c.
+func (v *virtualAuthenticator) assertion(c *virtualCredential, rp string, cdh []byte, uv bool, hs cbor.RawMessage, withUser bool) (map[uint64]any, byte) {
+	var ext map[string]any
+	if hs != nil && c.hmac {
+		out, status := v.hmacSecret(hs, c, uv)
+		if status != 0 {
+			return nil, status
+		}
+		ext = map[string]any{"hmac-secret": out}
+	}
 	var flags byte
 	if uv {
 		flags |= 0x04
@@ -450,19 +506,19 @@ func (v *virtualAuthenticator) getAssertion(params []byte) []byte {
 		ad = append(ad, eb...)
 	}
 	digest := sha256.Sum256(append(append([]byte(nil), ad...), cdh...))
-	sig, err := ecdsa.SignASN1(rand.Reader, cred.key, digest[:])
+	sig, err := ecdsa.SignASN1(rand.Reader, c.key, digest[:])
 	if err != nil {
 		v.t.Fatal(err)
 	}
 	resp := map[uint64]any{
-		gaRespCredential: map[string]any{"type": "public-key", "id": cred.id},
+		gaRespCredential: map[string]any{"type": "public-key", "id": c.id},
 		gaRespAuthData:   ad,
 		gaRespSignature:  sig,
 	}
-	if len(allow) == 0 {
-		resp[gaRespUser] = map[string]any{"id": cred.userID}
+	if withUser {
+		resp[gaRespUser] = map[string]any{"id": c.userID}
 	}
-	return v.ok(resp)
+	return resp, 0
 }
 
 // hmacSecret is CTAP 2.1 12.5, "authenticatorGetAssertion additional

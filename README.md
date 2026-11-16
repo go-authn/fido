@@ -146,3 +146,20 @@ than for an unverified one, with nothing in the output to tell them apart, so
 credential answers "no credentials" to a probe made before verification, so
 verify first. Which salts, which protocol, and whether a PIN is accepted in
 place of a finger are the caller's choices; this package encodes and decodes.
+
+## Every discoverable credential: GetAssertions
+
+`Key.GetAssertions(ctx, req, max)` sends one getAssertion and then one
+authenticatorGetNextAssertion (0x08, CTAP 2.1 §6.3) per further credential
+the authenticator announced (`numberOfCredentials`). With an empty `Allow`
+list, that reaches every discoverable credential of the relying party,
+newest first. `max` bounds the count, which is the authenticator's word: a
+larger announcement is refused before any further command.
+
+§6.3 does not say whether a next assertion carries extension outputs. An
+hmac-secret output found in one is decrypted with the first request's
+session; a next assertion without one has a nil `HMACSecret`, so the caller
+sees what the authenticator actually does. What a real key does is measured
+by go-macos/fido's `FIDO_REAL=1` test. An authenticator with a display may
+instead let the person pick one credential, and then announces none
+(§6.2.2, step 12).
