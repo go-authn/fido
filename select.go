@@ -219,11 +219,10 @@ func askToTouch(ctx context.Context, i int, c Candidate) (o outcome) {
 		}
 	}()
 	info, err := k.GetInfo(ctx)
-	if err != nil {
-		o.err = err
-		return o
+	touched := false
+	if err == nil {
+		touched, err = waitForTouch(ctx, k, info)
 	}
-	touched, err := waitForTouch(ctx, k, info)
 	switch {
 	case err != nil && ctx.Err() != nil && isCancellation(ctx, err):
 		// Cancelled because another key won, or the wait ran out: not a failure

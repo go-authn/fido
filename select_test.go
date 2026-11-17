@@ -227,7 +227,7 @@ func TestAKeyThatCannotBeAskedIsReportedBesideTheWinner(t *testing.T) {
 	a, b, c := newSelKey("A"), newSelKey("B"), newSelKey("C")
 	c.versions = []string{"FIDO_2_0"}
 	c.options = map[string]bool{} // no PIN capability: cannot be chosen without making a credential
-	close(b.touch)
+	go func() { time.Sleep(300 * time.Millisecond); close(b.touch) }()
 	cands := []Candidate{
 		{Label: "A", Open: func(context.Context) (*Key, error) { return nil, boom }},
 		b.candidate(), c.candidate(),
@@ -291,7 +291,9 @@ func TestAnExplicitRefusalAndAnInfoFailureAreFailuresOfThatKey(t *testing.T) {
 	a.touchStatus = 0x27 // CTAP2_ERR_OPERATION_DENIED
 	close(a.touch)
 	good := newSelKey("B")
-	close(good.touch)
+	// B is touched after the others have had time to answer, so their failures
+	// are in before the winner cancels the rest.
+	go func() { time.Sleep(300 * time.Millisecond); close(good.touch) }()
 	// A key whose getInfo fails: its channel works, but it answers nothing sane.
 	bad := newSelKey("C")
 	bad.versions = nil // parseInfo refuses an authenticator with no version
