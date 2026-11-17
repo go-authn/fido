@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.11.0
+
+- Added: `Select(ctx, []Candidate)`: with several keys attached, ask every one
+  for a touch at once and return the first touched (`Selected`). The others are
+  sent CTAPHID_CANCEL (`Key.Cancel`) and closed. The request is
+  authenticatorSelection (CTAP 2.1 6.9, `CmdSelection`) on a FIDO_2_1 key and,
+  as libfido2's touch.c does, a makeCredential with an empty pinUvAuthParam on a
+  2.0 key that takes a PIN; a 2.0 key with no PIN cannot be chosen without
+  making a credential on it and is reported as an error. Every key's own failure
+  is listed (`SelectError`, `Selected.Failures`); keys touched in the same
+  instant are named in `Selected.AlsoTouched`; nothing touched is the context's
+  error, never another key.
+- Added: `Key.Identity`: what a key says about itself without a touch (aaguid,
+  PIN set or not, fingerprints enrolled or not), to tell several apart.
+
 ## v0.10.0
 
 - Added: `Key.SetPIN` and `Key.ChangePIN` (clientPIN subcommands 0x03 and
