@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -73,6 +74,17 @@ type virtualAuthenticator struct {
 	nextHMAC bool
 	// announce, when > 0, overrides numberOfCredentials (a lying key).
 	announce int
+
+	// PIN management (6.5.5.5, 6.5.5.6): minPIN is the minPINLength advertised
+	// (0: not stated; the policy is then 4), forceChange the forcePINChange flag,
+	// lastPINReq the last setPIN/changePIN request as sent.
+	minPIN      int
+	forceChange bool
+	lastPINReq  map[uint64]cbor.RawMessage
+
+	// Bio enrollment (6.7); see bio_virtual_test.go.
+	bioOption string // "bioEnroll", "userVerificationMgmtPreview" or "" (none)
+	bio       bioState
 }
 
 type virtualCredential struct {
@@ -116,13 +128,27 @@ func (v *virtualAuthenticator) reply(cmd byte, params []byte) []byte {
 	switch cmd {
 	case CmdGetInfo:
 		v.asked = append(v.asked, "getInfo")
-		return v.ok(map[uint64]any{
+		opts := map[string]bool{"rk": true, "clientPin": v.pin != "", "uv": true, "pinUvAuthToken": true}
+		if v.bioOption != "" {
+			opts[v.bioOption] = len(v.bio.templates) > 0
+		}
+		info := map[uint64]any{
 			infoVersions:     []string{"FIDO_2_0", "FIDO_2_1"},
 			infoExtensions:   []string{"hmac-secret", "credProtect"},
 			infoAAGUID:       make([]byte, 16),
-			infoOptions:      map[string]bool{"rk": true, "clientPin": true, "uv": true, "pinUvAuthToken": true},
+			infoOptions:      opts,
 			infoPINProtocols: v.protocols,
-		})
+		}
+		if v.minPIN > 0 {
+			info[infoMinPINLength] = v.minPIN
+		}
+		if v.forceChange {
+			info[infoForcePIN] = true
+		}
+		return v.ok(info)
+	case CmdBioEnrollment, CmdBioEnrollmentPreview:
+		v.asked = append(v.asked, fmt.Sprintf("bio/%#02x", cmd))
+		return v.bioCmd(cmd, params)
 	case CmdClientPIN:
 		return v.clientPIN(params)
 	case CmdMakeCredential:
@@ -236,6 +262,8 @@ func (v *virtualAuthenticator) clientPIN(params []byte) []byte {
 		return v.ok(map[uint64]any{cpRespKeyAgreement: map[int64]any{
 			1: 2, 3: -25, -1: 1, -2: pub[1:33], -3: pub[33:],
 		}})
+	case subSetPIN, subChangePIN:
+		return v.setOrChangePIN(sub, proto, req)
 	case subGetPINToken, subGetTokenUsingPIN, subGetTokenUsingUV:
 		v.lastTokenReq = req
 		aesKey, _, ok := v.shared(proto, req[cpKeyAgreement])

@@ -147,6 +147,31 @@ credential answers "no credentials" to a probe made before verification, so
 verify first. Which salts, which protocol, and whether a PIN is accepted in
 place of a finger are the caller's choices; this package encodes and decodes.
 
+## Setting a PIN, and enrolling fingerprints
+
+`Key.SetPIN` (key has no PIN) and `Key.ChangePIN` implement clientPIN
+subcommands 0x03 and 0x04 (CTAP 2.1 6.5.5.5 and 6.5.5.6); give them
+`Info.MinPINLength` so a PIN the key would refuse costs no exchange.
+`Info.ForcePINChange` says the PIN must be changed before it is used again.
+
+`Key.Bio(info)` drives authenticatorBioEnrollment (6.7) on a key that declares
+`bioEnroll` (command 0x09, token with `PermBioEnrollment`) or the prototype
+`userVerificationMgmtPreview` (command 0x40, a plain getPinToken token):
+
+```go
+b, _ := k.Bio(info)
+tok, _ := k.PINToken(ctx, pin, proto, b.Permissions(), "")
+id, err := b.Enroll(ctx, tok, 0, func(s fido.EnrollStep) {
+	fmt.Println(s.Status, s.Remaining, "samples left")
+})
+b.Rename(ctx, tok, id, "right index")
+```
+
+A bad sample (finger too fast, off-centre, not lifted) does not count and the
+loop asks again; an enrollment that fails or is cancelled is cancelled on the
+key. Tested against a software authenticator that checks the MACed bytes; not
+run against a real key.
+
 ## Every discoverable credential: GetAssertions
 
 `Key.GetAssertions(ctx, req, max)` sends one getAssertion and then one
