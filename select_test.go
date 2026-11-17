@@ -205,6 +205,42 @@ func TestTwoKeysTouchedTogetherIsReported(t *testing.T) {
 	}
 }
 
+// settle is driven with the outcomes written out, in arrival order, so the
+// cases that depend on timing in a real run are checked deterministically.
+func TestSettleWithOutcomesWrittenOut(t *testing.T) {
+	a, b, c, d := newSelKey("A"), newSelKey("B"), newSelKey("C"), newSelKey("D")
+	open := func(s *selKey) *Key {
+		k, err := Open(timeout(t, time.Second), s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	boom := errors.New("boom")
+	cands := []Candidate{a.candidate(), b.candidate(), c.candidate(), d.candidate()}
+	kb, kc, kd := open(b), open(c), open(d)
+	sel, err := settle(cands, []outcome{
+		{i: 3, err: boom},
+		{i: 1, key: kb, touched: true}, // first touched: the winner
+		{i: 2, key: kc, touched: true}, // touched too, before it could be cancelled
+		{i: 0},                         // cancelled: no key, no error
+		{i: 3, key: kd},                // a key not touched is closed
+	}, nil)
+	if err != nil || sel.Index != 1 || sel.Key != kb || !slices.Equal(sel.AlsoTouched, []string{"C"}) ||
+		len(sel.Failures) != 1 || sel.Failures[0].Index != 3 {
+		t.Fatalf("%v %+v", err, sel)
+	}
+	if c.closed.Load() != 1 || d.closed.Load() != 1 || b.closed.Load() != 0 {
+		t.Errorf("closed: b=%d c=%d d=%d", b.closed.Load(), c.closed.Load(), d.closed.Load())
+	}
+	// No winner: the failures, in list order, and the context's error.
+	_, err = settle(cands, []outcome{{i: 2, err: boom}, {i: 0, err: boom}}, context.DeadlineExceeded)
+	var se *SelectError
+	if !errors.As(err, &se) || se.Failures[0].Index != 0 || se.Cause != context.DeadlineExceeded {
+		t.Errorf("%v", err)
+	}
+}
+
 func TestNothingTouchedIsATimeoutNotAnotherKey(t *testing.T) {
 	a, b := newSelKey("A"), newSelKey("B")
 	_, err := Select(timeout(t, 200*time.Millisecond), []Candidate{a.candidate(), b.candidate()})

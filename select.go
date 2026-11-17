@@ -159,42 +159,46 @@ func Select(ctx context.Context, cands []Candidate) (*Selected, error) {
 		}()
 	}
 
-	var winner *outcome
-	var failures []CandidateError
-	var losers []outcome
+	// Outcomes in the order they arrive: the first touched key is the winner,
+	// and the others are told at once so a key still waiting stops blinking.
+	outs := make([]outcome, 0, len(cands))
 	for range cands {
 		o := <-results
+		outs = append(outs, o)
+		if o.err == nil && o.touched {
+			cancel()
+		}
+	}
+	wg.Wait()
+	return settle(cands, outs, ctx.Err())
+}
+
+// settle turns the outcomes, in arrival order, into the answer. It is separate
+// from Select so the cases that depend on timing (two keys touched together,
+// a failure beside a winner) are tested with the outcomes written out.
+func settle(cands []Candidate, outs []outcome, ctxErr error) (*Selected, error) {
+	var winner *outcome
+	var failures []CandidateError
+	var also []string
+	for _, o := range outs {
 		switch {
 		case o.err != nil:
 			failures = append(failures, CandidateError{Index: o.i, Label: cands[o.i].Label, Err: o.err})
 		case o.touched && winner == nil:
 			w := o
 			winner = &w
-			// The rest are told at once, so a key still waiting stops blinking.
-			cancel()
 		default:
-			losers = append(losers, o)
-		}
-	}
-	wg.Wait()
-
-	var also []string
-	for _, l := range losers {
-		if l.touched {
-			also = append(also, cands[l.i].Label)
-		}
-		if l.key != nil {
-			l.key.Close()
+			if o.touched {
+				also = append(also, cands[o.i].Label)
+			}
+			if o.key != nil {
+				o.key.Close()
+			}
 		}
 	}
 	slices.SortFunc(failures, func(a, b CandidateError) int { return a.Index - b.Index })
-
 	if winner == nil {
-		e := &SelectError{Failures: failures}
-		if ctx.Err() != nil {
-			e.Cause = ctx.Err()
-		}
-		return nil, e
+		return nil, &SelectError{Failures: failures, Cause: ctxErr}
 	}
 	return &Selected{
 		Index: winner.i, Label: cands[winner.i].Label, Key: winner.key, Info: winner.info,
