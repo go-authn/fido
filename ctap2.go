@@ -35,9 +35,11 @@ const StatusOK Status = 0x00
 const (
 	StatusOperationDenied   Status = 0x27 // the person refused, or (YubiKey) did not touch in time
 	StatusNoCredentials     Status = 0x2e
+	StatusInvalidOption     Status = 0x2c // bio enrollment: no such enrollment, or none exist
 	StatusUserActionTimeout Status = 0x2f
 	StatusPINInvalid        Status = 0x31
 	StatusPINBlocked        Status = 0x32
+	StatusPINAuthInvalid    Status = 0x33 // the token or pinUvAuthParam was not accepted
 	StatusPINAuthBlocked    Status = 0x34
 )
 
@@ -89,6 +91,12 @@ var statusNames = map[Status]string{
 	0x3f: "built-in user verification did not match",
 	0x3a: "the person did not touch the key in time",
 	0x3b: "the key needs to be touched",
+	// Names for the PIN and bio enrollment commands (codes from libfido2's err.h).
+	0x03: "a value had the wrong length (a name too long?)",
+	0x17: "the fingerprint database is full",
+	0x2c: "no such enrollment, or an option the command cannot take",
+	0x30: "not allowed (a built-in verification that is not configured, or a continuation out of order)",
+	0x40: "the token does not carry the permission this command needs",
 }
 
 // Error reports whether the status is a refusal.
@@ -130,6 +138,12 @@ type Info struct {
 	PINProtocols []uint
 	// Transports it can be reached over, such as "usb" or "nfc".
 	Transports []string
+	// ForcePINChange is true when the PIN must be changed before it is used
+	// again (key 0x0C).
+	ForcePINChange bool
+	// MinPINLength is the fewest code points a PIN may have (key 0x0D), or zero
+	// when the authenticator did not say, which means 4.
+	MinPINLength uint
 }
 
 // Has reports whether the authenticator declares an option AND says it is
@@ -167,6 +181,8 @@ const (
 	infoMaxMsgSize   = 0x05
 	infoPINProtocols = 0x06
 	infoTransports   = 0x09
+	infoForcePIN     = 0x0C
+	infoMinPINLength = 0x0D
 )
 
 // GetInfo asks the authenticator to describe itself.
@@ -245,6 +261,8 @@ func parseInfo(body []byte) (Info, error) {
 		{infoMaxMsgSize, &i.MaxMsgSize},
 		{infoPINProtocols, &i.PINProtocols},
 		{infoTransports, &i.Transports},
+		{infoForcePIN, &i.ForcePINChange},
+		{infoMinPINLength, &i.MinPINLength},
 	} {
 		if err := get(f.key, f.into); err != nil {
 			return Info{}, err

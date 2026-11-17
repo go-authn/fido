@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.10.0
+
+- Added: `Key.SetPIN` and `Key.ChangePIN` (clientPIN subcommands 0x03 and
+  0x04, CTAP 2.1 6.5.5.5 and 6.5.5.6): newPinEnc is the PIN padded to 64 bytes
+  and encrypted, pinUvAuthParam covers newPinEnc (setPIN) or newPinEnc then
+  pinHashEnc (changePIN). `CheckNewPIN` applies the platform's length rules
+  (minPINLength, 63 bytes of UTF-8) before any exchange. `Info.MinPINLength`
+  (0x0D) and `Info.ForcePINChange` (0x0C).
+- Added: fingerprint enrollment, authenticatorBioEnrollment (6.7): `Key.Bio`
+  returns a `Bio` with `SensorInfo`, `EnrollBegin`, `EnrollNext`,
+  `EnrollCancel`, `Enroll` (the whole loop, cancelling on failure, at most 256
+  rounds), `Enumerate`, `Rename`, `Remove`; `Info.BioMode` picks command 0x09
+  (`bioEnroll`) or the prototype command 0x40 (`userVerificationMgmtPreview`,
+  libfido2's value; the CTAP 2.1 PS text printed 0x41). `SampleStatus` names
+  lastEnrollSampleStatus. Statuses named: `StatusPINAuthInvalid`,
+  `StatusInvalidOption`.
+- Tests: the software authenticator implements setPIN, changePIN and bio
+  enrollment, checking the MACed bytes; fuzz targets for the bio replies and
+  the PIN rules. Not run against a real key.
+
 ## v0.9.0
 
 - Added: `StatusError`. A refused CTAP2 command now returns `*StatusError`,
