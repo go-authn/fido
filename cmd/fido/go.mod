@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0
-	github.com/go-authn/fido v0.12.0
+	github.com/go-authn/fido v0.13.0
 	github.com/go-authn/secretsource v0.3.0
 	github.com/go-gnulinux/fido v0.6.0
 	github.com/go-macos/fido v0.6.0
