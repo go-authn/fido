@@ -9,8 +9,8 @@
 //
 // A PIN is read from the terminal with echo off (a new one is typed twice),
 // from a regular file readable by its owner alone (--pin-file), or from a
-// secret manager (--pin-from keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT
-// or file:PATH; see github.com/go-authn/secretsource), and never from an
+// secret manager (--pin-from keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT,
+// keepassxc:by-path/Group/Title or file:PATH; see github.com/go-authn/secretsource), and never from an
 // argument or an environment variable. The library takes a PIN as a Go
 // string, which cannot be wiped; the byte buffers this command reads it into
 // are.
@@ -146,7 +146,7 @@ func (s pinSrc) read(cmd *cobra.Command) ([]byte, bool, error) {
 // addFlags registers --<name>-file and --<name>-from, which exclude each other.
 func (s *pinSrc) addFlags(cmd *cobra.Command, name, what string) {
 	cmd.Flags().StringVar(&s.file, name+"-file", "", "read "+what+" from this file (mode 0600 or stricter) instead of the terminal")
-	cmd.Flags().StringVar(&s.from, name+"-from", "", "read "+what+" from a secret manager instead of the terminal: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or file:PATH")
+	cmd.Flags().StringVar(&s.from, name+"-from", "", "read "+what+" from a secret manager instead of the terminal: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT, keepassxc:by-path/Group/Title or file:PATH")
 	cmd.MarkFlagsMutuallyExclusive(name+"-file", name+"-from")
 }
 
