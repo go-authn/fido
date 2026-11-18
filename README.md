@@ -249,6 +249,24 @@ The reference holds no secret; there is no scheme that runs a command. See
 store the item (`security add-generic-password -s fido -a yubikey-5c -w`,
 `secret-tool store --label PIN service fido account yubikey-5c`).
 
+### Saving the PIN as it is set
+
+`fido pin set` and `fido pin change` can put the new PIN straight into a secret
+manager, so it never exists as a plaintext file or on the terminal:
+
+```
+fido pin set --save-to 'keepassxc:https://fido.invalid/yubikey-5c' --generate 12
+fido pin change --pin-from 'keepassxc:https://fido.invalid/yubikey-5c' \
+    --save-to 'keepassxc:https://fido.invalid/yubikey-5c' --generate 12 --replace
+```
+
+`--generate N` draws N letters and digits (from the key's minimum to 63) and
+needs `--save-to`; `--replace` overwrites an existing entry. The PIN is stored
+BEFORE the key is touched: a failed store changes nothing. If the key then
+refuses, `pin set` says the PIN stays stored for a key that has none, and
+`pin change --replace` puts the current PIN back in the entry. Nothing secret
+is printed.
+
 ## Every discoverable credential: GetAssertions
 
 `Key.GetAssertions(ctx, req, max)` sends one getAssertion and then one

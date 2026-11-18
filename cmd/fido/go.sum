@@ -5,10 +5,10 @@ github.com/fxamacker/cbor/v2 v2.10.0 h1:HVF3T5vYwLqO81ebPirWEPNv2SMrUMD3HLnKgEr6
 github.com/fxamacker/cbor/v2 v2.10.0/go.mod h1:uSwlToFuT9BZAKRxxVm3qQC8DR4tlWl7D6pf20iRYH4=
 github.com/go-authn/fido v0.13.0 h1:+bNPzn/AH/4kNJi0hUqIyfIYdrIq5ove/6hX8HWq0KQ=
 github.com/go-authn/fido v0.13.0/go.mod h1:EnseUqvvwzHnj7W6occN/5ySFfofWdJHJqcE2UHDDaA=
-github.com/go-authn/secretsource v0.3.0 h1:YtKtbNBi+cuE8cccnRAdF9Shi7gR2TSdBLdR6SF36vQ=
-github.com/go-authn/secretsource v0.3.0/go.mod h1:us6+J8pfHFpG+VmYvtjvJTqzbPULzKCUw5v/HEVWXQU=
-github.com/go-freedesktop/secretservice v0.3.0 h1:buSN+1mfarron+FbahR+DLZRZOdn+wMPuXxmvhCEWyw=
-github.com/go-freedesktop/secretservice v0.3.0/go.mod h1:JQ2M/y+g4Img7KM2bleUTz2EruH9fpkJ4GHqQpYVAMo=
+github.com/go-authn/secretsource v0.5.0 h1:F0fiH9rejXHE1p05Peny2LZ6YIaI7rCpl9H/QTXUL0c=
+github.com/go-authn/secretsource v0.5.0/go.mod h1:N75MKROZjCyVTw9096tgzhEn1Fz0c3I0BUIDKPo9h1E=
+github.com/go-freedesktop/secretservice v0.4.0 h1:PV2fLZ/ZsL2R5T6CMBOQ/5lmwP73rUJ1PN0FG6v5gQ0=
+github.com/go-freedesktop/secretservice v0.4.0/go.mod h1:JQ2M/y+g4Img7KM2bleUTz2EruH9fpkJ4GHqQpYVAMo=
 github.com/go-gnulinux/fido v0.6.0 h1:NPCWE86c8dCIcgwNjOzdYfLCBJhoYVScD0USEG47LKY=
 github.com/go-gnulinux/fido v0.6.0/go.mod h1:2nT6jlb8LMIeG9EvHeOFlPHUxRZ0VC0BuzhngTSEd7s=
 github.com/go-macos/fido v0.6.0 h1:3bfihY1zypIBklx/2vPp3uJaZPxW/QKvoxXNftKZ2ns=
