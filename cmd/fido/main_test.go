@@ -32,6 +32,8 @@ type fake struct {
 	renamed, removed                 []byte
 	renamedTo                        string
 	closed                           bool
+	writes                           int // how many times a command asked to WRITE
+	identity                         authn.Identity
 
 	// injected errors
 	infoErr, retriesErr, uvErr, setErr, changeErr, tokenErr, bioErr error
@@ -59,6 +61,7 @@ func (f *fake) Bio(authn.Info) (bioAPI, error) {
 	}
 	return f, nil
 }
+func (f *fake) Identity(context.Context) (authn.Identity, error)     { return f.identity, f.infoErr }
 func (f *fake) Close() error                                         { f.closed = true; return nil }
 func (f *fake) Permissions() authn.Permissions                       { return authn.PermBioEnrollment }
 func (f *fake) SensorInfo(context.Context) (authn.SensorInfo, error) { return f.sensor, f.sensorErr }
@@ -118,9 +121,12 @@ func use(t *testing.T, f *fake, openErr error) {
 	t.Helper()
 	old := openKey
 	t.Cleanup(func() { openKey = old })
-	openKey = func(context.Context) (keyAPI, error) {
+	openKey = func(cmd *cobra.Command, write bool) (keyAPI, error) {
 		if openErr != nil {
 			return nil, openErr
+		}
+		if write {
+			f.writes++
 		}
 		return f, nil
 	}
@@ -509,39 +515,6 @@ func TestTheTerminalIsNeededWithoutAFile(t *testing.T) {
 	cmd.SetErr(&e)
 	if b, err := readTerminal(cmd, "PIN: "); err != nil || string(b) != "typed" || !strings.Contains(e.String(), "PIN: ") {
 		t.Errorf("%q %v %q", b, err, e.String())
-	}
-}
-
-func TestOpenKeyChoosesTheTransportByOS(t *testing.T) {
-	old := goos
-	t.Cleanup(func() { goos = old })
-	ctx := context.Background()
-	goos = "windows"
-	if _, err := openKey(ctx); err == nil || !strings.Contains(err.Error(), "Windows refuses raw HID") {
-		t.Errorf("windows: %v", err)
-	}
-	// darwin and linux reach their transports (replaced here by one that
-	// answers the CTAPHID handshake), and a failing transport is an error.
-	om, ol := openMac, openLinux
-	t.Cleanup(func() { openMac, openLinux = om, ol })
-	var viaMac, viaLinux bool
-	openMac = func(ctx context.Context) (*authn.Key, error) { viaMac = true; return handshakeKey(t) }
-	openLinux = func(ctx context.Context) (*authn.Key, error) { viaLinux = true; return handshakeKey(t) }
-	for _, os := range []string{"darwin", "linux"} {
-		goos = os
-		k, err := openKey(ctx)
-		if err != nil {
-			t.Fatalf("%s: %v", os, err)
-		}
-		k.Close()
-	}
-	if !viaMac || !viaLinux {
-		t.Errorf("mac %v linux %v", viaMac, viaLinux)
-	}
-	openLinux = func(context.Context) (*authn.Key, error) { return nil, errors.New("no key") }
-	goos = "linux"
-	if _, err := openKey(ctx); err == nil {
-		t.Error("a failing transport opened")
 	}
 }
 

@@ -172,6 +172,34 @@ loop asks again; an enrollment that fails or is cancelled is cancelled on the
 key. Tested against a software authenticator that checks the MACed bytes; not
 run against a real key.
 
+## Several keys: choose, never "the first"
+
+The transports list keys (`go-macos/fido` and `go-gnulinux/fido`:
+`Devices`/`OpenDevice`), and `Select` chooses among them by touch: every key is
+asked for user presence at once (authenticatorSelection, CTAP 2.1 6.9), the
+first touched wins and the rest get CTAPHID_CANCEL. `Selected.AlsoTouched` names
+keys touched in the same instant, so a caller about to change something can
+refuse an ambiguous choice; `Key.Identity` says, without a touch, which key is
+which (aaguid, PIN set, fingerprints enrolled).
+
+## The fido command
+
+`cmd/fido` (its own module: `go install github.com/go-authn/fido/cmd/fido@latest`)
+sets a PIN and enrols fingerprints; macOS and Linux (Windows refuses raw HID to
+a process that is not elevated).
+
+```
+fido list                                 # every key: id, product, serial, aaguid, PIN?, fingerprints? (no touch)
+fido info                                 # one key in detail
+fido pin set | change
+fido fingerprint add [--name N] | list | rename ID NAME | remove ID
+```
+
+With several keys attached, `--device ID` names the one to act on (IDs come from
+`fido list`; they are matched exactly). Without it the person touches the key to
+use; a command that WRITES never runs on "the first", refuses if two keys were
+touched together, and always prints which key it is about to change.
+
 ## Every discoverable credential: GetAssertions
 
 `Key.GetAssertions(ctx, req, max)` sends one getAssertion and then one
