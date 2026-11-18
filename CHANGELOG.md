@@ -1,5 +1,15 @@
 # Changelog
 
+## cmd/fido v0.4.0
+
+- Added: `fido name set NAME | show | remove`: a name stored on the key
+  (go-authn/fido v0.12.0), read with no touch and no PIN. `fido list` has a NAME
+  column and `fido info`-style commands name the key they act on with its name.
+  `--device` accepts a name as well as an id, exactly; a name on two keys is
+  refused, naming both. A key that refuses the silent read gets a local alias
+  table (`<user config dir>/fido/names`, 0600), bound to its serial or its port,
+  and the output says which path a key uses.
+
 ## v0.12.0
 
 - Added: a name stored ON the key, so it follows the key across ports and

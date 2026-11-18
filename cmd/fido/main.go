@@ -47,6 +47,12 @@ type keyAPI interface {
 	PINToken(ctx context.Context, pin string, proto authn.PINProtocol, perms authn.Permissions, rpID string) (authn.Token, error)
 	Bio(info authn.Info) (bioAPI, error)
 	Identity(context.Context) (authn.Identity, error)
+	ReadName(context.Context) (string, error)
+	SetName(ctx context.Context, name string, tok authn.NameTokens) error
+	RemoveName(ctx context.Context, tok authn.NameTokens) error
+	NameTokens(ctx context.Context, pin string, proto authn.PINProtocol, info authn.Info) (authn.NameTokens, error)
+	// Device says which listed key this is.
+	Device() device
 	Close() error
 }
 
@@ -61,7 +67,13 @@ type bioAPI interface {
 }
 
 // realKey adapts *authn.Key to keyAPI.
-type realKey struct{ *authn.Key }
+type realKey struct {
+	*authn.Key
+	dev device
+}
+
+// Device says which listed key this is (its id and serial).
+func (r realKey) Device() device { return r.dev }
 
 func (r realKey) Bio(info authn.Info) (bioAPI, error) {
 	b, err := r.Key.Bio(info)
@@ -166,8 +178,8 @@ func RootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().String("device", "", "act on the key with this ID (see `fido list`); with several keys attached and no --device, touch the one to use")
-	root.AddCommand(listCmd(), infoCmd(), pinCmd(), fingerprintCmd())
+	root.PersistentFlags().String("device", "", "act on the key with this ID or name (see `fido list`; a name must be on exactly one key); with several keys attached and no --device, touch the one to use")
+	root.AddCommand(listCmd(), infoCmd(), nameCmd(), pinCmd(), fingerprintCmd())
 	return root
 }
 

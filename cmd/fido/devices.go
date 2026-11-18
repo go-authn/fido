@@ -104,27 +104,61 @@ var chooseByTouch = func(ctx context.Context, devs []device) (*authn.Selected, e
 // errNoKey is what listing nothing means to the commands.
 var errNoKey = errors.New("no security key is attached")
 
-// findDevice matches --device against the listed IDs, exactly: a prefix or a
-// position could name a different key after a replug.
-func findDevice(devs []device, id string) (device, error) {
+// findKey opens the key --device names: the one with that ID, matched exactly
+// (a prefix or a position could name another key after a replug), else the one
+// whose NAME it is. A name on two keys is refused, naming both.
+func findKey(ctx context.Context, devs []device, want string) (device, *authn.Key, error) {
 	for _, d := range devs {
-		if d.ID == id {
-			return d, nil
+		if d.ID == want {
+			k, err := d.open(ctx)
+			return d, k, err
 		}
 	}
-	var ids []string
-	for _, d := range devs {
-		ids = append(ids, d.ID)
+	type match struct {
+		d device
+		k *authn.Key
 	}
-	return device{}, fmt.Errorf("no attached key has the id %q (attached: %s); `fido list` shows them", id, strings.Join(ids, ", "))
+	var found []match
+	closeAll := func() {
+		for _, m := range found {
+			m.k.Close()
+		}
+	}
+	for _, d := range devs {
+		k, err := d.open(ctx)
+		if err != nil {
+			continue // a key that will not open cannot be shown to have the name
+		}
+		if name, _, _ := keyName(ctx, realKey{k, d}); name == want {
+			found = append(found, match{d, k})
+			continue
+		}
+		k.Close()
+	}
+	switch len(found) {
+	case 1:
+		return found[0].d, found[0].k, nil
+	case 0:
+		var ids []string
+		for _, d := range devs {
+			ids = append(ids, d.ID)
+		}
+		return device{}, nil, fmt.Errorf("no attached key has the id or name %q (attached: %s); `fido list` shows them", want, strings.Join(ids, ", "))
+	}
+	closeAll()
+	var labels []string
+	for _, m := range found {
+		labels = append(labels, m.d.Label)
+	}
+	return device{}, nil, fmt.Errorf("the name %q is on %d keys (%s): name them differently, or pass --device with an id", want, len(found), strings.Join(labels, "; "))
 }
 
 // openKey chooses the key a command acts on and opens it; tests replace it.
 //
-// With --device, that key. With one key attached, that key. With several and no
-// --device, the person touches the one to use (CTAP 2.1 authenticatorSelection):
-// a command that WRITES is never run on "the first". Either way the key is
-// named on stderr BEFORE anything is done to it.
+// With --device (an ID or a name), that key. With one key attached, that key.
+// With several and no --device, the person touches the one to use (CTAP 2.1
+// authenticatorSelection): a command that WRITES is never run on "the first".
+// Either way the key is named on stderr BEFORE anything is done to it.
 var openKey = func(cmd *cobra.Command, write bool) (keyAPI, error) {
 	ctx := ctxOf(cmd)
 	devs, err := listDevices()
@@ -137,25 +171,25 @@ var openKey = func(cmd *cobra.Command, write bool) (keyAPI, error) {
 	errw := cmd.ErrOrStderr()
 	want, _ := cmd.Flags().GetString("device")
 	if want != "" || len(devs) == 1 {
-		d := devs[0]
+		d, k := devs[0], (*authn.Key)(nil)
 		if want != "" {
-			if d, err = findDevice(devs, want); err != nil {
+			if d, k, err = findKey(ctx, devs, want); err != nil {
 				return nil, err
 			}
-		}
-		k, err := d.open(ctx)
-		if err != nil {
+		} else if k, err = d.open(ctx); err != nil {
 			return nil, err
 		}
-		announce(errw, d.Label, write)
-		return realKey{k}, nil
+		rk := realKey{k, d}
+		name, _, _ := keyName(ctx, rk)
+		announce(errw, d.Label, name, write)
+		return rk, nil
 	}
 
 	fmt.Fprintf(errw, "%d security keys are attached:\n", len(devs))
 	for _, d := range devs {
 		fmt.Fprintf(errw, "  %s\n", d.Label)
 	}
-	fmt.Fprintf(errw, "Touch the key to use (%s), or pass --device ID.\n", selectTimeout)
+	fmt.Fprintf(errw, "Touch the key to use (%s), or pass --device ID or NAME.\n", selectTimeout)
 	sctx, stop := context.WithTimeout(ctx, selectTimeout)
 	defer stop()
 	sel, err := chooseByTouch(sctx, devs)
@@ -170,17 +204,20 @@ var openKey = func(cmd *cobra.Command, write bool) (keyAPI, error) {
 		}
 		fmt.Fprintf(errw, "Warning: %s; using %s.\n", warn, sel.Label)
 	}
-	announce(errw, sel.Label, write)
-	return realKey{sel.Key}, nil
+	rk := realKey{sel.Key, devs[sel.Index]}
+	name, _, _ := keyName(ctx, rk)
+	announce(errw, sel.Label, name, write)
+	return rk, nil
 }
 
-// announce names the key before anything is done to it.
-func announce(w interface{ Write([]byte) (int, error) }, label string, write bool) {
+// announce names the key (and its name, when it has one) before anything is
+// done to it.
+func announce(w interface{ Write([]byte) (int, error) }, label, name string, write bool) {
 	if write {
-		fmt.Fprintf(w, "This key will be changed: %s\n", label)
+		fmt.Fprintf(w, "This key will be changed: %s%s\n", label, quoted(name))
 		return
 	}
-	fmt.Fprintf(w, "Key: %s\n", label)
+	fmt.Fprintf(w, "Key: %s%s\n", label, quoted(name))
 }
 
 func listCmd() *cobra.Command {
@@ -198,25 +235,27 @@ func listCmd() *cobra.Command {
 			}
 			ctx := ctxOf(cmd)
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "#\tID\tPRODUCT\tSERIAL\tAAGUID\tPIN\tFINGERPRINTS")
+			fmt.Fprintln(tw, "#\tID\tNAME\tPRODUCT\tSERIAL\tAAGUID\tPIN\tFINGERPRINTS")
 			for i, d := range devs {
 				serial := d.Serial
 				if serial == "" {
 					serial = "-"
 				}
-				row := fmt.Sprintf("%d\t%s\t%s\t%s\t", i, d.ID, d.Name, serial)
 				k, err := d.open(ctx)
 				if err != nil {
-					fmt.Fprintf(tw, "%s?\t?\t? (%s)\n", row, oneLine(err))
+					fmt.Fprintf(tw, "%d\t%s\t?\t%s\t%s\t?\t?\t? (%s)\n", i, d.ID, d.Name, serial, oneLine(err))
 					continue
 				}
-				id, err := realKey{k}.Identity(ctx)
-				k.Close()
+				rk := realKey{k, d}
+				id, err := rk.Identity(ctx)
 				if err != nil {
-					fmt.Fprintf(tw, "%s?\t?\t? (%s)\n", row, oneLine(err))
+					k.Close()
+					fmt.Fprintf(tw, "%d\t%s\t?\t%s\t%s\t?\t?\t? (%s)\n", i, d.ID, d.Name, serial, oneLine(err))
 					continue
 				}
-				fmt.Fprintf(tw, "%s%x\t%s\t%s\n", row, id.AAGUID, pinWord(id), fingerprintWord(id))
+				name, src, nerr := keyName(ctx, rk)
+				k.Close()
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%x\t%s\t%s\n", i, d.ID, nameCell(name, src, nerr), d.Name, serial, id.AAGUID, pinWord(id), fingerprintWord(id))
 			}
 			return tw.Flush()
 		},
@@ -248,4 +287,21 @@ func fingerprintWord(id authn.Identity) string {
 // oneLine trims a library error to what a table cell can hold.
 func oneLine(err error) string {
 	return strings.TrimPrefix(strings.ReplaceAll(err.Error(), "\n", " "), "fido: ")
+}
+
+// nameCell is the NAME column: the name, marked when it comes from the local
+// alias table, a dash for none, and a question mark when the key will not show
+// its name (or could not be asked).
+func nameCell(name string, src nameSource, err error) string {
+	switch {
+	case err != nil:
+		return "? (" + oneLine(err) + ")"
+	case src == nameAlias:
+		return name + " (alias)"
+	case src == nameHidden:
+		return "? (will not show it without a PIN)"
+	case name == "":
+		return "-"
+	}
+	return name
 }

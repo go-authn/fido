@@ -3,8 +3,8 @@ github.com/ebitengine/purego v0.11.2 h1:WWiTx8rD8zYdOwSj8O/NiNbsOvSAgJMTlyV1XlbU
 github.com/ebitengine/purego v0.11.2/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
 github.com/fxamacker/cbor/v2 v2.10.0 h1:HVF3T5vYwLqO81ebPirWEPNv2SMrUMD3HLnKgEr6uWE=
 github.com/fxamacker/cbor/v2 v2.10.0/go.mod h1:uSwlToFuT9BZAKRxxVm3qQC8DR4tlWl7D6pf20iRYH4=
-github.com/go-authn/fido v0.11.0 h1:GTPNwIdZsrPQieHL8/keHzkuKUM4TZHTICDNvX4RaLM=
-github.com/go-authn/fido v0.11.0/go.mod h1:EnseUqvvwzHnj7W6occN/5ySFfofWdJHJqcE2UHDDaA=
+github.com/go-authn/fido v0.12.0 h1:FvXutCRWAQy3VNs8Kk6RKSaPwE6HhZbT/4Vh3Q/HI7M=
+github.com/go-authn/fido v0.12.0/go.mod h1:EnseUqvvwzHnj7W6occN/5ySFfofWdJHJqcE2UHDDaA=
 github.com/go-authn/secretsource v0.1.0 h1:cFO72GZzK4BSvNcJccPkUkupVEcTfprYJYV9jlgewv0=
 github.com/go-authn/secretsource v0.1.0/go.mod h1:9tBP8jIgWOMcbv0lkKPS+183wZkyCjpAbma5kan1h7o=
 github.com/go-freedesktop/secretservice v0.2.0 h1:0dGEmwZUgv2OYgyZfTrWEa3lW6UTU7UGexasvvOVh1A=
