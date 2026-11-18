@@ -200,6 +200,23 @@ With several keys attached, `--device ID` names the one to act on (IDs come from
 use; a command that WRITES never runs on "the first", refuses if two keys were
 touched together, and always prints which key it is about to change.
 
+### Where the PIN comes from
+
+The terminal (echo off), a 0600 file (`--pin-file`, `--new-pin-file`), or a
+secret manager, so no plaintext file has to sit on disk (`--pin-from`,
+`--new-pin-from`; each excludes the `-file` flag of the same PIN):
+
+```
+fido fingerprint list --pin-from keychain:fido/yubikey-5c          # macOS Keychain
+fido fingerprint list --pin-from secretservice:fido/yubikey-5c     # GNOME Keyring, KWallet, KeePassXC (Secret Service Integration)
+fido fingerprint list --pin-from file:/run/user/1000/pin           # same as --pin-file
+```
+
+The reference holds no secret; there is no scheme that runs a command. See
+[go-authn/secretsource](https://github.com/go-authn/secretsource) for how to
+store the item (`security add-generic-password -s fido -a yubikey-5c -w`,
+`secret-tool store --label PIN service fido account yubikey-5c`).
+
 ## Every discoverable credential: GetAssertions
 
 `Key.GetAssertions(ctx, req, max)` sends one getAssertion and then one
