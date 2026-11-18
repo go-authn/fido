@@ -520,6 +520,11 @@ func TestExtensionOutputsParse(t *testing.T) {
 	if err != nil || !o.HMACSecret || o.CredProtect != 2 || len(o.Raw) != 3 {
 		t.Errorf("%+v %v", o, err)
 	}
+	for _, p := range []uint{1, 2, 3} {
+		if o, err := ext(map[string]any{"credProtect": p}).ExtensionOutputs(); err != nil || o.CredProtect != CredProtect(p) {
+			t.Errorf("credProtect %d: %+v %v", p, o, err)
+		}
+	}
 	o, err = ext(map[string]any{"hmac-secret": []byte("ciphertext")}).ExtensionOutputs()
 	if err != nil || o.HMACSecret || string(o.hmacEnc) != "ciphertext" {
 		t.Errorf("%+v %v", o, err)
@@ -530,6 +535,10 @@ func TestExtensionOutputsParse(t *testing.T) {
 		"unhashable":    {Extensions: []byte{0xa1, 0x6b, 'h', 'm', 'a', 'c', '-', 's', 'e', 'c', 'r', 'e', 't', 0xa1, 0xa1, 0x01, 0x01, 0x02}},
 		"protect text":  ext(map[string]any{"credProtect": "three"}),
 		"protect minus": ext(map[string]any{"credProtect": -1}),
+		// CTAP 2.1 12.1 defines 1 to 3; the bounds on either side.
+		"protect zero":  ext(map[string]any{"credProtect": uint(0)}),
+		"protect four":  ext(map[string]any{"credProtect": uint(4)}),
+		"protect seven": ext(map[string]any{"credProtect": uint(7)}),
 	} {
 		if _, err := a.ExtensionOutputs(); err == nil {
 			t.Errorf("%s: no error", name)

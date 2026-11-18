@@ -6,6 +6,8 @@ package fido
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -25,11 +27,12 @@ import (
 // makeCredential/getAssertion with hmac-secret and credProtect.
 //
 // It is written from the specification (CTAP 2.1: 6.1, 6.2, 6.5, 12.1, 12.5),
-// NOT from this package's code: its token check, salt MAC, HKDF and secret
-// derivation use crypto primitives directly, so a mistake there cannot be
-// echoed back by a fake that shares it. What it DOES share is the AES-256-CBC
-// step (pinCrypt) and the CTAP2 CBOR encoder, and the parameter-number
-// constants; those are covered by the existing tests and by the real-key test.
+// NOT from this package's code: its token check, salt MAC, HKDF, secret
+// derivation and AES-256-CBC (pinCrypt) use crypto primitives directly, so a
+// mistake there cannot be echoed back by a fake that shares it. It shares the
+// parameter-number constants, each of which spec_numbers_test.go pins to the
+// number the specification prints, and the CTAP2 CBOR encoder, whose output
+// the real-key test (go-macos/fido) checks against a key.
 // The two behaviours that silently
 // ruin a disk unlock are reproduced on purpose:
 //
@@ -237,19 +240,40 @@ func hkdfSHA256(ikm []byte, info string) []byte {
 	return exp.Sum(nil)
 }
 
-// pinEncrypt and pinDecrypt are the AES-256-CBC of 6.5.6 / 6.5.7.
+// pinCrypt is the AES-256-CBC of 6.5.6 / 6.5.7, written from the text and not
+// from pinKeys: protocol one uses an all-zero IV; protocol two encrypts under a
+// random IV and returns iv || ct, and decrypting splits after the 16th byte.
+// Neither pads, so a length that is not a whole number of blocks is an error
+// (nil here, which the callers answer as a refused request).
 func pinCrypt(t *testing.T, proto int, key, data []byte, encrypt bool) []byte {
 	t.Helper()
-	k := pinKeys{proto: PINProtocol(proto), aes: key}
-	var out []byte
-	var err error
-	if encrypt {
-		out, err = k.encrypt(data)
-	} else {
-		out, err = k.decrypt(data)
-	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil
+	}
+	iv := make([]byte, aes.BlockSize)
+	switch {
+	case proto == 2 && encrypt:
+		if _, err := rand.Read(iv); err != nil {
+			t.Fatal(err)
+		}
+	case proto == 2:
+		if len(data) < aes.BlockSize {
+			return nil
+		}
+		iv, data = data[:aes.BlockSize], data[aes.BlockSize:]
+	}
+	if len(data) == 0 || len(data)%aes.BlockSize != 0 {
+		return nil
+	}
+	out := make([]byte, len(data))
+	if encrypt {
+		cipher.NewCBCEncrypter(block, iv).CryptBlocks(out, data)
+	} else {
+		cipher.NewCBCDecrypter(block, iv).CryptBlocks(out, data)
+	}
+	if proto == 2 && encrypt {
+		return append(iv, out...)
 	}
 	return out
 }

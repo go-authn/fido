@@ -125,6 +125,12 @@ func (a AuthData) ExtensionOutputs() (ExtensionOutputs, error) {
 		if err := cbor.Unmarshal(raw, &o.CredProtect); err != nil {
 			return ExtensionOutputs{}, fmt.Errorf("fido: the credProtect output: %w", err)
 		}
+		// CTAP 2.1 12.1 defines 1, 2 and 3 and nothing else. A key that reports
+		// another value has applied a policy this package cannot name, so the
+		// caller must not be told it was one of the three.
+		if o.CredProtect < CredProtectOptional || o.CredProtect > CredProtectRequired {
+			return ExtensionOutputs{}, fmt.Errorf("fido: the credProtect output %d is not one of 1, 2, 3", o.CredProtect)
+		}
 	}
 	return o, nil
 }
