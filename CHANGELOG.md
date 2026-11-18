@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.12.0
+
+- Added: a name stored ON the key, so it follows the key across ports and
+  machines. `Key.SetName`, `Key.ReadName`, `Key.RemoveName`, `Key.NameTokens`,
+  `CheckName`, `DecodeName`, `NameRP` ("name.fido"), `MaxNameBytes` (64), and the
+  errors `ErrNoName`, `ErrNameRefused`, `ErrNameAmbiguous`. The name is the user
+  handle of a discoverable credential under `name.fido`, credProtect level 1.
+  It is read with NO touch and NO PIN: getAssertion with `up` false and no
+  pinUvAuthParam (CTAP 2.1 6.2.2: step 9 is skipped for up=false; alwaysUv,
+  7.2.3 and step 5, bites only when up is true; credProtect 1 is not filtered
+  without verification, 7.4 and 7.5; `user.id` is returned, only name,
+  displayName and icon are withheld, 12.3). A key that refuses anyway is
+  `ErrNameRefused` so a caller can fall back. `SetName` deletes the old name
+  FIRST and makes the new one after: the key never holds two, and a failure
+  leaves it with none.
+- Added: authenticatorCredentialManagement (6.8): `Key.CredMgmt` with
+  `Credentials` (enumerateCredentialsBegin and the rest) and `Delete`;
+  `Info.CredMgmtMode` picks command 0x0A (`credMgmt`, token with the cm
+  permission, bound to no relying party) or the prototype 0x41
+  (`credentialMgmtPreview`, a plain getPinToken token).
+- Tests: the software authenticator holds several tokens, implements credential
+  management and an alwaysUv policy, and can refuse the silent read; fuzz
+  targets for name decoding and credential management replies. Not run against a
+  real key.
+
 ## cmd/fido v0.3.0
 
 - Added: `--pin-from REF` and `--new-pin-from REF` read the PIN from a secret

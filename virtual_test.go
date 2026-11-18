@@ -85,6 +85,19 @@ type virtualAuthenticator struct {
 	// Bio enrollment (6.7); see bio_virtual_test.go.
 	bioOption string // "bioEnroll", "userVerificationMgmtPreview" or "" (none)
 	bio       bioState
+
+	// Credential management and verification policy (6.8, 7.2.3).
+	cmOption string // "credMgmt", "credentialMgmtPreview" or "" (none)
+	alwaysUv bool   // the key requires verification unless "up" is false (6.2.2 step 5)
+	// refuseSilent makes the key refuse an unverified up=false getAssertion
+	// (CTAP2_ERR_OPERATION_DENIED), as a key that did not read 6.2.2 step 5 might.
+	older           []tokenRec
+	breakBegin      bool
+	breakDelete     bool
+	breakNext       int
+	refuseSilent    bool
+	protectOverride uint64
+	pendingCM       []*virtualCredential
 }
 
 type virtualCredential struct {
@@ -132,6 +145,12 @@ func (v *virtualAuthenticator) reply(cmd byte, params []byte) []byte {
 		if v.bioOption != "" {
 			opts[v.bioOption] = len(v.bio.templates) > 0
 		}
+		if v.cmOption != "" {
+			opts[v.cmOption] = len(v.creds) > 0
+		}
+		if v.alwaysUv {
+			opts["alwaysUv"] = true
+		}
 		info := map[uint64]any{
 			infoVersions:     []string{"FIDO_2_0", "FIDO_2_1"},
 			infoExtensions:   []string{"hmac-secret", "credProtect"},
@@ -146,6 +165,9 @@ func (v *virtualAuthenticator) reply(cmd byte, params []byte) []byte {
 			info[infoForcePIN] = true
 		}
 		return v.ok(info)
+	case CmdCredentialManagement, CmdCredentialManagementPreview:
+		v.asked = append(v.asked, fmt.Sprintf("cm/%#02x", cmd))
+		return v.credMgmt(cmd, params)
 	case CmdBioEnrollment, CmdBioEnrollmentPreview:
 		v.asked = append(v.asked, fmt.Sprintf("bio/%#02x", cmd))
 		return v.bioCmd(cmd, params)
@@ -298,6 +320,9 @@ func (v *virtualAuthenticator) clientPIN(params []byte) []byte {
 				return v.fail(0x31)
 			}
 		}
+		if v.token != nil { // a key keeps several tokens at once
+			v.older = append(v.older, tokenRec{v.token, v.tokenProto, v.tokenPerms, v.tokenRP})
+		}
 		v.token = make([]byte, 32)
 		_, _ = rand.Read(v.token)
 		v.tokenProto, v.tokenPerms, v.tokenRP = proto, perms, rp
@@ -317,13 +342,37 @@ func (v *virtualAuthenticator) authorise(param, protoRaw cbor.RawMessage, hasPar
 	var proto int
 	_ = cbor.Unmarshal(param, &p)
 	_ = cbor.Unmarshal(protoRaw, &proto)
-	if v.token == nil || proto != v.tokenProto || !verify(proto, v.token, cdh, p) {
+	perms, trp, ok := v.matchToken(proto, cdh, p)
+	if !ok {
 		return false, 0x33
 	}
-	if v.tokenPerms&perm == 0 || (v.tokenRP != "" && v.tokenRP != rp) {
+	if perms&perm == 0 || (trp != "" && trp != rp) {
 		return false, 0x33
 	}
 	return true, 0
+}
+
+// tokenRec is a token the virtual key issued and still honours.
+type tokenRec struct {
+	tok   []byte
+	proto int
+	perms uint64
+	rp    string
+}
+
+// matchToken finds the token (the newest, or an older one still held) that
+// authenticates msg, and returns its permissions and relying party. Setting
+// v.token to nil revokes them all.
+func (v *virtualAuthenticator) matchToken(proto int, msg, param []byte) (perms uint64, rp string, ok bool) {
+	if v.token == nil {
+		return 0, "", false
+	}
+	for _, r := range append([]tokenRec{{v.token, v.tokenProto, v.tokenPerms, v.tokenRP}}, v.older...) {
+		if r.proto == proto && verify(proto, r.tok, msg, param) {
+			return r.perms, r.rp, true
+		}
+	}
+	return 0, "", false
 }
 
 func coseES256(k *ecdsa.PrivateKey) map[int64]any {
@@ -359,6 +408,9 @@ func (v *virtualAuthenticator) makeCredential(params []byte) []byte {
 	uv, status := v.authorise(pp, req[mcPinUvAuthProtocol], hasPP, cdh, 0x01, rp.ID)
 	if status != 0 {
 		return v.fail(status)
+	}
+	if v.alwaysUv && !uv {
+		return v.fail(0x36) // CTAP2_ERR_PUAT_REQUIRED (7.2.3)
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -398,6 +450,13 @@ func (v *virtualAuthenticator) makeCredential(params []byte) []byte {
 			ext["credProtect"] = c.protect
 		}
 	}
+	if v.protectOverride != 0 { // a key that makes a credential with another policy than asked
+		c.protect = v.protectOverride
+		if ext == nil {
+			ext = map[string]any{}
+		}
+		ext["credProtect"] = v.protectOverride
+	}
 	v.creds = append(v.creds, c)
 
 	var flags byte = 0x40
@@ -434,6 +493,22 @@ func (v *virtualAuthenticator) getAssertion(params []byte) []byte {
 	uv, status := v.authorise(pp, req[gaPinUvAuthProtocol], hasPP, cdh, 0x02, rp)
 	if status != 0 {
 		return v.fail(status)
+	}
+	up := true
+	if raw, ok := req[gaOptions]; ok {
+		var o map[string]bool
+		_ = cbor.Unmarshal(raw, &o)
+		if val, has := o["up"]; has {
+			up = val
+		}
+	}
+	// 6.2.2 step 5: alwaysUv bites only "if up is true"; a key that refuses the
+	// silent read anyway is modelled by refuseSilent.
+	if v.alwaysUv && up && !uv {
+		return v.fail(0x36)
+	}
+	if v.refuseSilent && !up && !uv {
+		return v.fail(0x27)
 	}
 
 	// 12.1: a credential is used only as its protection policy allows. The
