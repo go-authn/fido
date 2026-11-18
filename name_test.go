@@ -40,6 +40,16 @@ func nameTokens(t *testing.T, k *Key, info Info) NameTokens {
 	return tok
 }
 
+// cmToken is a token credential management accepts, for tests of it alone.
+func cmToken(t *testing.T, k *Key, info Info) Token {
+	t.Helper()
+	tok, err := nameTokens(t, k, info).forCredMgmt(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
 func nameCreds(v *virtualAuthenticator) (out []*virtualCredential) {
 	for _, c := range v.creds {
 		if c.rp == NameRP {
@@ -212,29 +222,29 @@ func TestSetNameRefusals(t *testing.T) {
 	if err := k.SetName(ctx, "", NameTokens{}); err == nil {
 		t.Error("an empty name")
 	}
-	// A bad token: the key's refusal comes back and nothing was deleted.
+	// The PIN changing under us: the first token request fails and nothing was
+	// deleted.
 	if err := k.SetName(ctx, "one", nameTokens(t, k, info)); err != nil {
 		t.Fatal(err)
 	}
-	stale := nameTokens(t, k, info)
-	v.token = nil
-	if err := k.SetName(ctx, "two", stale); err == nil {
+	tk := nameTokens(t, k, info)
+	v.pin = "changed"
+	if err := k.SetName(ctx, "two", tk); err == nil {
 		t.Error("an unauthorised replace")
 	}
 	if got := nameCreds(v); len(got) != 1 || string(got[0].userID) != "one" {
 		t.Errorf("the old name changed: %d", len(got))
 	}
+	v.pin = "1234"
 	// Making fails after the old one is gone: the key has no name, never two.
-	v.alwaysUv = true
-	tok := nameTokens(t, k, info)
-	tok.MakeCredential = Token{}
-	if err := k.SetName(ctx, "three", tok); err == nil {
-		t.Error("an unverified make on an alwaysUv key")
+	v.failMake = 0x27
+	if err := k.SetName(ctx, "three", nameTokens(t, k, info)); err == nil {
+		t.Error("a refused make")
 	}
 	if got := nameCreds(v); len(got) != 0 {
 		t.Errorf("%d credentials left", len(got))
 	}
-	v.alwaysUv = false
+	v.failMake = 0
 	// A policy other than level 1 stored: reported.
 	v.protectOverride = 3
 	if err := k.SetName(ctx, "four", nameTokens(t, k, info)); err == nil || !strings.Contains(err.Error(), "credProtect level 1") {
@@ -286,80 +296,149 @@ func TestRemoveName(t *testing.T) {
 	if err := k2.RemoveName(ctx, nameTokens(t, k2, info2)); err == nil || !strings.Contains(err.Error(), "does not declare credential management") {
 		t.Errorf("%v", err)
 	}
-	// A refusal while deleting.
-	v.token = nil
-	if err := k.RemoveName(ctx, NameTokens{}); err == nil {
+	// No PIN at all, and a PIN that changed under the tokens.
+	if err := k.RemoveName(ctx, NameTokens{}); err == nil || !strings.Contains(err.Error(), "needs the PIN") {
+		t.Errorf("no PIN: %v", err)
+	}
+	nt := nameTokens(t, k, info)
+	v.pin = "changed"
+	if err := k.RemoveName(ctx, nt); err == nil {
 		t.Error("an unauthorised remove")
 	}
 }
 
-func TestNameTokensByWhatTheKeyDeclares(t *testing.T) {
+// ⛔ A real authenticator keeps ONE pinUvAuthToken: a new one replaces the last.
+// v0.12.0 fetched the make-credential token first and the credential management
+// token second, so makeCredential was authorised by a dead token and a YubiKey 5
+// answered CTAP2_ERR_PIN_AUTH_INVALID. The virtual key now keeps one token too.
+func TestAKeyKeepsOneTokenAtATime(t *testing.T) {
 	ctx := context.Background()
-	// Final credential management: two tokens, the first bound to name.fido and
-	// the second to no relying party, with the cm permission.
-	v, k, info := namedKey(t, "credMgmt")
-	if _, err := k.NameTokens(ctx, "1234", PINProtocolTwo, info); err != nil {
+	_, k, info := namedKey(t, "credMgmt")
+	first, err := k.PINToken(ctx, "1234", PINProtocolTwo, PermMakeCredential, NameRP)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if v.tokenPerms != uint64(PermCredentialManagement) || v.tokenRP != "" {
-		t.Errorf("the last token: perms %#x rp %q", v.tokenPerms, v.tokenRP)
+	if _, err := k.PINToken(ctx, "1234", PINProtocolTwo, PermCredentialManagement, ""); err != nil {
+		t.Fatal(err)
 	}
-	// Preview: the last token is the legacy one (no permissions sent).
-	v, k, info = namedKey(t, "credentialMgmtPreview")
-	if _, err := k.NameTokens(ctx, "1234", PINProtocolTwo, info); err != nil {
+	// The first token is dead: makeCredential with it is refused.
+	_, err = k.MakeCredential(ctx, MakeCredentialRequest{
+		ClientDataHash: make([]byte, 32), RP: RelyingParty{ID: NameRP}, User: User{ID: []byte("x")},
+		Options: map[string]bool{"rk": true}, Token: first,
+	})
+	var se *StatusError
+	if !errors.As(err, &se) || se.Status != StatusPINAuthInvalid {
+		t.Fatalf("a replaced token authorised a request: %v", err)
+	}
+	// SetName asks for each token as it uses it, so replacing a name works on a
+	// key that keeps one.
+	nt := nameTokens(t, k, info)
+	for _, n := range []string{"a", "b"} {
+		if err := k.SetName(ctx, n, nt); err != nil {
+			t.Fatalf("%q: %v", n, err)
+		}
+	}
+}
+
+func TestSetNameAsksForEachTokenWhenItIsUsed(t *testing.T) {
+	ctx := context.Background()
+	v, k, info := namedKey(t, "credMgmt")
+	nt := nameTokens(t, k, info)
+	if err := k.SetName(ctx, "a", nt); err != nil {
+		t.Fatal(err)
+	}
+	v.issued = nil
+	if err := k.SetName(ctx, "b", nt); err != nil {
+		t.Fatal(err)
+	}
+	// Credential management first (the cm permission, no relying party), then
+	// makeCredential (the mc permission, bound to name.fido).
+	if len(v.issued) != 2 || v.issued[0].perms != uint64(PermCredentialManagement) || v.issued[0].rp != "" ||
+		v.issued[1].perms != uint64(PermMakeCredential) || v.issued[1].rp != NameRP {
+		t.Errorf("tokens asked for: %+v", v.issued)
+	}
+}
+
+func TestNameTokensAskForWhatTheKeyDeclares(t *testing.T) {
+	ctx := context.Background()
+	// Final credential management.
+	v, k, info := namedKey(t, "credMgmt")
+	nt := nameTokens(t, k, info)
+	if _, err := nt.forCredMgmt(ctx); err != nil || v.tokenPerms != uint64(PermCredentialManagement) || v.tokenRP != "" {
+		t.Errorf("cm: %v perms %#x rp %q", err, v.tokenPerms, v.tokenRP)
+	}
+	if _, err := nt.forMake(ctx); err != nil || v.tokenPerms != uint64(PermMakeCredential) || v.tokenRP != NameRP {
+		t.Errorf("make: %v perms %#x rp %q", err, v.tokenPerms, v.tokenRP)
+	}
+	// The prototype, and a key with neither command: a plain token for cm.
+	for _, cm := range []string{"credentialMgmtPreview", ""} {
+		v, k, info = namedKey(t, cm)
+		nt = nameTokens(t, k, info)
+		if _, err := nt.forCredMgmt(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, has := v.lastTokenReq[cpPermissions]; has {
+			t.Errorf("%q: a plain token was asked for with permissions", cm)
+		}
+	}
+	// A key with no pinUvAuthToken: plain tokens for both.
+	delete(info.Options, "pinUvAuthToken")
+	nt = NameTokens{k: k, pin: "1234", proto: PINProtocolTwo, info: info}
+	if _, err := nt.forMake(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, has := v.lastTokenReq[cpPermissions]; has {
-		t.Error("a prototype key was asked for permissions")
+		t.Error("a CTAP 2.0 key was asked for permissions")
 	}
-	// Neither command: only the make token matters, scoped to the name's RP.
-	v, k, info = namedKey(t, "")
-	if _, err := k.NameTokens(ctx, "1234", PINProtocolTwo, info); err != nil {
-		t.Fatal(err)
-	}
-	if v.tokenPerms != uint64(PermMakeCredential) || v.tokenRP != NameRP {
-		t.Errorf("perms %#x rp %q", v.tokenPerms, v.tokenRP)
-	}
-	// A key with no pinUvAuthToken: one legacy token for both.
-	delete(info.Options, "pinUvAuthToken")
-	tk, err := k.NameTokens(ctx, "1234", PINProtocolTwo, info)
-	if err != nil || !tk.MakeCredential.Valid() || !tk.CredentialManagement.Valid() {
-		t.Errorf("%+v %v", tk, err)
-	}
-	// A wrong PIN fails at whichever token it is first used for.
+	// A wrong PIN fails at once, before anything can be changed.
 	_, k, info = namedKey(t, "credMgmt")
 	if _, err := k.NameTokens(ctx, "0000", PINProtocolTwo, info); err == nil {
-		t.Error("a wrong PIN made a token")
+		t.Error("a wrong PIN was accepted")
 	}
-	// The second token failing.
-	v, k, info = namedKey(t, "credMgmt")
-	calls, failLegacy := 0, false
-	wrap := ctap2Key(t, CapCBOR, func(cmd byte, params []byte) []byte {
-		if cmd == CmdClientPIN {
-			var req map[uint64]cbor.RawMessage
-			_ = cbor.Unmarshal(params, &req)
-			var sub int
-			_ = cbor.Unmarshal(req[cpSubCommand], &sub)
-			if sub == subGetTokenUsingPIN {
-				calls++
-				if calls == 2 {
+	// A token request failing part-way through SetName: at the credential
+	// management token, at the make token (after the delete), and at the plain
+	// token of a prototype key.
+	for name, c := range map[string]struct {
+		cm      string
+		failAt  int
+		legacy  bool
+		remains int
+	}{
+		"cm token":   {"credMgmt", 1, false, 1},
+		"make token": {"credMgmt", 2, false, 0},
+		"legacy cm":  {"credentialMgmtPreview", 0, true, 1},
+	} {
+		v, k, info = namedKey(t, c.cm)
+		if err := k.SetName(ctx, "old", nameTokens(t, k, info)); err != nil {
+			t.Fatal(err)
+		}
+		calls := 0
+		wrap := ctap2Key(t, CapCBOR, func(cmd byte, params []byte) []byte {
+			if cmd == CmdClientPIN {
+				var req map[uint64]cbor.RawMessage
+				_ = cbor.Unmarshal(params, &req)
+				var sub int
+				_ = cbor.Unmarshal(req[cpSubCommand], &sub)
+				if sub == subGetTokenUsingPIN {
+					calls++
+					if calls == c.failAt {
+						return []byte{0x31}
+					}
+				}
+				if sub == subGetPINToken && c.legacy {
 					return []byte{0x31}
 				}
 			}
-			if sub == subGetPINToken && failLegacy {
-				return []byte{0x31}
-			}
+			return v.reply(cmd, params)
+		})
+		nt := NameTokens{k: wrap, pin: "1234", proto: PINProtocolTwo, info: info}
+		calls = 0 // counted from SetName's own requests
+		if err := wrap.SetName(ctx, "new", nt); err == nil {
+			t.Errorf("%s: a failing token request was ignored", name)
 		}
-		return v.reply(cmd, params)
-	})
-	if _, err := wrap.NameTokens(ctx, "1234", PINProtocolTwo, info); err == nil {
-		t.Error("the second token failing was ignored")
-	}
-	failLegacy = true
-	info.Options["credentialMgmtPreview"] = true
-	delete(info.Options, "credMgmt")
-	if _, err := wrap.NameTokens(ctx, "1234", PINProtocolTwo, info); err == nil {
-		t.Error("the preview token failing was ignored")
+		if got := len(nameCreds(v)); got != c.remains {
+			t.Errorf("%s: %d name credentials left, want %d", name, got, c.remains)
+		}
 	}
 }
 
@@ -402,4 +481,32 @@ func vcred(id []byte, rp string, user []byte, protect uint64) *virtualCredential
 		panic(err)
 	}
 	return &virtualCredential{id: id, rp: rp, userID: user, key: key, discovered: true, protect: protect}
+}
+
+func TestAFailingEnumerationStopsSetNameBeforeAnythingIsMade(t *testing.T) {
+	ctx := context.Background()
+	v := newVirtualAuthenticator(t, "1234")
+	v.cmOption = "credMgmt"
+	v.breakBegin = true
+	k := wrapped(t, v, func(cmd byte, params []byte) []byte {
+		var req map[uint64]cbor.RawMessage
+		_ = cbor.Unmarshal(params, &req)
+		var sub int
+		_ = cbor.Unmarshal(req[cmSub], &sub)
+		if sub == cmEnumerateCredentialsBegin {
+			return append([]byte{0}, cborOf(t, "not a map")...)
+		}
+		return nil
+	})
+	info, _ := k.GetInfo(ctx)
+	nt, err := k.NameTokens(ctx, "1234", PINProtocolTwo, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := k.SetName(ctx, "x", nt); err == nil {
+		t.Error("a failing enumeration was ignored")
+	}
+	if got := nameCreds(v); len(got) != 0 {
+		t.Errorf("a name was made anyway: %d", len(got))
+	}
 }

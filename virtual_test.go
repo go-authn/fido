@@ -91,7 +91,9 @@ type virtualAuthenticator struct {
 	alwaysUv bool   // the key requires verification unless "up" is false (6.2.2 step 5)
 	// refuseSilent makes the key refuse an unverified up=false getAssertion
 	// (CTAP2_ERR_OPERATION_DENIED), as a key that did not read 6.2.2 step 5 might.
-	older           []tokenRec
+	older           []tokenRec // always empty: the key keeps one token (see the issuance)
+	failMake        byte       // makeCredential answers this status
+	issued          []tokenRec // every token issued, in order (permissions and relying party)
 	breakBegin      bool
 	breakDelete     bool
 	breakNext       int
@@ -320,12 +322,13 @@ func (v *virtualAuthenticator) clientPIN(params []byte) []byte {
 				return v.fail(0x31)
 			}
 		}
-		if v.token != nil { // a key keeps several tokens at once
-			v.older = append(v.older, tokenRec{v.token, v.tokenProto, v.tokenPerms, v.tokenRP})
-		}
+		// ⛔ ONE token at a time, as a real authenticator keeps (a YubiKey 5.7
+		// answered CTAP2_ERR_PIN_AUTH_INVALID to a makeCredential authorised by a
+		// token that a later getPinToken had replaced): the previous token dies.
 		v.token = make([]byte, 32)
 		_, _ = rand.Read(v.token)
 		v.tokenProto, v.tokenPerms, v.tokenRP = proto, perms, rp
+		v.issued = append(v.issued, tokenRec{nil, proto, perms, rp})
 		return v.ok(map[uint64]any{cpRespToken: pinCrypt(v.t, proto, aesKey, v.token, true)})
 	}
 	return v.fail(0x01)
@@ -400,6 +403,9 @@ func (v *virtualAuthenticator) makeCredential(params []byte) []byte {
 	}
 	var user struct {
 		ID []byte `cbor:"id"`
+	}
+	if v.failMake != 0 {
+		return v.fail(v.failMake)
 	}
 	_ = cbor.Unmarshal(req[mcClientDataHash], &cdh)
 	_ = cbor.Unmarshal(req[mcRP], &rp)

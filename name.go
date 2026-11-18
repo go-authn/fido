@@ -120,37 +120,54 @@ func (k *Key) ReadName(ctx context.Context) (string, error) {
 	return DecodeName(a.UserID)
 }
 
-// NameTokens are the tokens naming a key needs: one to make the credential
-// (bound to [NameRP]) and one to delete the old one (credential management,
-// bound to no relying party).
+// NameTokens authorises naming a key from one PIN.
+//
+// ⛔ It deliberately holds the PIN, not tokens. An authenticator keeps ONE
+// pinUvAuthToken at a time: obtaining a new one replaces the last, so a token
+// fetched for credential management is dead by the time makeCredential uses it
+// (the authenticator answers CTAP2_ERR_PIN_AUTH_INVALID, 0x33, to the request's
+// pinUvAuthParam even though the PIN was accepted). SetName therefore asks for
+// each token at the moment it is used: credential management first (no relying
+// party bound, 6.8), then makeCredential bound to [NameRP]. The zero value
+// carries no verification.
 type NameTokens struct {
-	MakeCredential, CredentialManagement Token
+	k     *Key
+	pin   string
+	proto PINProtocol
+	info  Info
 }
 
-// NameTokens obtains them from a PIN. A key with the CTAP 2.1 permissions gets
-// two tokens; a key without (CTAP 2.0, or the prototype credential management)
-// gets one plain token for both.
+// NameTokens checks the PIN with a token (so a wrong PIN fails before anything
+// is changed, costing the one retry a wrong PIN always costs) and returns what
+// SetName and RemoveName need to ask for tokens as they go. The token used to
+// check is discarded.
 func (k *Key) NameTokens(ctx context.Context, pin string, proto PINProtocol, info Info) (NameTokens, error) {
-	if !info.Has("pinUvAuthToken") {
-		t, err := k.PINToken(ctx, pin, proto, 0, "")
-		return NameTokens{MakeCredential: t, CredentialManagement: t}, err
-	}
-	mc, err := k.PINToken(ctx, pin, proto, PermMakeCredential, NameRP)
-	if err != nil {
+	n := NameTokens{k: k, pin: pin, proto: proto, info: info}
+	if _, err := n.forMake(ctx); err != nil {
 		return NameTokens{}, err
 	}
-	cmTok := mc
-	if info.CredMgmtMode() == CredMgmtFinal {
-		if cmTok, err = k.PINToken(ctx, pin, proto, PermCredentialManagement, ""); err != nil {
-			return NameTokens{}, err
-		}
-	} else if info.CredMgmtMode() == CredMgmtPreview {
-		// The prototype wants a token with no permissions.
-		if cmTok, err = k.PINToken(ctx, pin, proto, 0, ""); err != nil {
-			return NameTokens{}, err
-		}
+	return n, nil
+}
+
+func (n NameTokens) valid() bool { return n.k != nil }
+
+// forCredMgmt asks for a token credential management accepts: the cm
+// permission and no relying party on a key with the final command; a plain
+// getPinToken token (no permissions) on a prototype or CTAP 2.0 key.
+func (n NameTokens) forCredMgmt(ctx context.Context) (Token, error) {
+	if n.info.Has("pinUvAuthToken") && n.info.CredMgmtMode() == CredMgmtFinal {
+		return n.k.PINToken(ctx, n.pin, n.proto, PermCredentialManagement, "")
 	}
-	return NameTokens{MakeCredential: mc, CredentialManagement: cmTok}, nil
+	return n.k.PINToken(ctx, n.pin, n.proto, 0, "")
+}
+
+// forMake asks for a token makeCredential accepts: the mc permission bound to
+// [NameRP], or a plain token on a CTAP 2.0 key.
+func (n NameTokens) forMake(ctx context.Context) (Token, error) {
+	if n.info.Has("pinUvAuthToken") {
+		return n.k.PINToken(ctx, n.pin, n.proto, PermMakeCredential, NameRP)
+	}
+	return n.k.PINToken(ctx, n.pin, n.proto, 0, "")
 }
 
 // SetName gives the key a name, replacing any it had.
@@ -172,8 +189,12 @@ func (k *Key) SetName(ctx context.Context, name string, tok NameTokens) error {
 	if !info.Has("rk") || !slices.Contains(info.Extensions, "credProtect") {
 		return errors.New("fido: this key cannot store a name: it needs discoverable credentials and credProtect")
 	}
-	if cm, cerr := k.CredMgmt(info); cerr == nil && tok.CredentialManagement.Valid() {
-		if err := cm.deleteAll(ctx, tok.CredentialManagement); err != nil {
+	if cm, cerr := k.CredMgmt(info); cerr == nil && tok.valid() {
+		cmTok, err := tok.forCredMgmt(ctx)
+		if err != nil {
+			return err
+		}
+		if err := cm.deleteAll(ctx, cmTok); err != nil {
 			return err
 		}
 	} else if _, rerr := k.ReadName(ctx); rerr == nil || errors.Is(rerr, ErrNameRefused) || errors.Is(rerr, ErrNameAmbiguous) {
@@ -183,12 +204,20 @@ func (k *Key) SetName(ctx context.Context, name string, tok NameTokens) error {
 	if _, err := randRead(cdh[:]); err != nil {
 		return fmt.Errorf("fido: cannot make a challenge: %w", err)
 	}
+	// The token for makeCredential is asked for NOW, after the deletes: it
+	// replaces the credential management token, which is no longer needed.
+	var mcTok Token
+	if tok.valid() {
+		if mcTok, err = tok.forMake(ctx); err != nil {
+			return err
+		}
+	}
 	att, err := k.MakeCredential(ctx, MakeCredentialRequest{
 		ClientDataHash: cdh[:],
 		RP:             RelyingParty{ID: NameRP, Name: "Key name"},
 		User:           User{ID: []byte(name), Name: name, DisplayName: name},
 		Options:        map[string]bool{"rk": true},
-		Token:          tok.MakeCredential,
+		Token:          mcTok,
 		Extensions:     Extensions{CredProtect: CredProtectOptional},
 	})
 	if err != nil {
@@ -210,7 +239,14 @@ func (k *Key) RemoveName(ctx context.Context, tok NameTokens) error {
 	if err != nil {
 		return err
 	}
-	return cm.deleteAll(ctx, tok.CredentialManagement)
+	if !tok.valid() {
+		return errors.New("fido: removing a name needs the PIN")
+	}
+	cmTok, err := tok.forCredMgmt(ctx)
+	if err != nil {
+		return err
+	}
+	return cm.deleteAll(ctx, cmTok)
 }
 
 // deleteAll deletes every credential of [NameRP].

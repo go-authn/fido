@@ -47,7 +47,7 @@ func TestCredentialsAreListedWithTheirUsers(t *testing.T) {
 	ctx := context.Background()
 	v, k, info := namedKey(t, "credMgmt")
 	cm, _ := k.CredMgmt(info)
-	tok := nameTokens(t, k, info).CredentialManagement
+	tok := cmToken(t, k, info)
 	if got, err := cm.Credentials(ctx, tok, NameRP); err != nil || got != nil {
 		t.Fatalf("none: %v %v", got, err)
 	}
@@ -64,7 +64,7 @@ func TestCredentialManagementRefusals(t *testing.T) {
 	ctx := context.Background()
 	v, k, info := namedKey(t, "credMgmt")
 	cm, _ := k.CredMgmt(info)
-	tok := nameTokens(t, k, info).CredentialManagement
+	tok := cmToken(t, k, info)
 	var se *StatusError
 	// No token, a wrong one, and one bound to a relying party.
 	if _, err := cm.Credentials(ctx, Token{}, NameRP); err == nil || !strings.Contains(err.Error(), "needs a token") {
@@ -214,12 +214,12 @@ func TestAnEnumerationThatGoesWrongIsAnError(t *testing.T) {
 	}
 	// deleteAll surfaces the enumeration's failure, as SetName does.
 	v.breakNext = 1
-	if err := k.RemoveName(ctx, NameTokens{CredentialManagement: tok}); err == nil {
+	if err := k.RemoveName(ctx, nameTokens(t, k, info)); err == nil {
 		t.Error("RemoveName ignored a failing enumeration")
 	}
 	// ...and a failing delete.
 	v.breakNext, v.breakDelete = 0, true
-	if err := k.RemoveName(ctx, NameTokens{CredentialManagement: tok}); err == nil {
+	if err := k.RemoveName(ctx, nameTokens(t, k, info)); err == nil {
 		t.Error("RemoveName ignored a failing delete")
 	}
 }

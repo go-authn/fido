@@ -81,7 +81,7 @@ var statusNames = map[Status]string{
 	0x2f: "the person did not act in time",
 	0x31: "the PIN was wrong",
 	0x32: "the PIN is blocked: no tries are left, and only a reset, which erases the credentials, unblocks it",
-	0x33: "the PIN token was not accepted",
+	0x33: "the request's pinUvAuthParam was refused: if a PIN was just accepted, a token was issued but does not authorise this request (a newer token replaced it, or it lacks the permission or relying party); no PIN retry was used",
 	0x34: "too many wrong PINs in a row; unplug the key and plug it in again",
 	0x35: "no PIN is set on this authenticator",
 	0x36: "a PIN is required and none was given",
