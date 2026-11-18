@@ -131,7 +131,8 @@ the `extensions` parameter, and `AuthData.ExtensionOutputs` reads what comes
 back. `hmac-secret` (CTAP 2.1, 12.5) works under both PIN/UV auth protocols:
 register with `Extensions{HMACSecret: true}`, then ask for one or two secrets
 with `GetAssertionRequest.HMACSecret` (32-byte salts) and read
-`Assertion.HMACSecret`. `credProtect` takes the policies 1, 2 and 3.
+`Assertion.HMACSecret`. `credProtect` takes the policies 1, 2 and 3, and
+`ExtensionOutputs` refuses a key that reports any other value.
 
 `Key.UVToken` obtains a pinUvAuthToken by built-in user verification, such as a
 fingerprint sensor (getPinUvAuthTokenUsingUvWithPermissions, subcommand 0x06);

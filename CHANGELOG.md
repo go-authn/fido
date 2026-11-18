@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.13.1
+
+- Fix: `AuthData.ExtensionOutputs` reported a credProtect output of 0, 4 or 7
+  as it came; CTAP 2.1 12.1 defines 1 to 3, and any other value is now an
+  error.
+- Tests: the virtual authenticator's AES-256-CBC is written from 6.5.6 / 6.5.7
+  instead of calling the package's own (a symmetric mistake in both directions
+  passed the whole suite before), and every command byte and map key it shares
+  is pinned to the specification's number.
+
 ## cmd/fido v0.6.1
 
 - Fix: `fido name set` and `fido name remove` failed on a real YubiKey 5 with
