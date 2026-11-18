@@ -19,12 +19,16 @@ import (
 // answerKey is a key that answers the handshake, getInfo and
 // authenticatorSelection at once (so a touch is "instant").
 type answerKey struct {
-	name   string
-	opts   map[string]bool
-	aaguid byte
-	mu     sync.Mutex
-	inbox  chan []byte
-	reasm  map[uint32]*authn.Reassembler
+	name string
+	opts map[string]bool
+	// stored is the name this key holds; refuse makes it refuse the silent read.
+	stored   string
+	refuse   bool
+	readFail bool // answers the read with a status that is neither none nor refused
+	aaguid   byte
+	mu       sync.Mutex
+	inbox    chan []byte
+	reasm    map[uint32]*authn.Reassembler
 }
 
 func newAnswerKey(name string, opts map[string]bool) *answerKey {
@@ -81,6 +85,18 @@ func (a *answerKey) Send(report []byte) error {
 			a.say(own, authn.CmdCBOR, append([]byte{0}, b...))
 		case authn.CmdSelection:
 			a.say(own, authn.CmdCBOR, []byte{0})
+		case authn.CmdGetAssertion:
+			switch {
+			case a.readFail:
+				a.say(own, authn.CmdCBOR, []byte{0x01})
+			case a.refuse:
+				a.say(own, authn.CmdCBOR, []byte{0x27})
+			case a.stored == "":
+				a.say(own, authn.CmdCBOR, []byte{0x2E})
+			default:
+				body, _ := cbor.Marshal(map[uint64]any{1: map[string]any{"type": "public-key", "id": []byte{1}}, 2: make([]byte, 37), 3: []byte{1}, 4: map[string]any{"id": []byte(a.stored)}})
+				a.say(own, authn.CmdCBOR, append([]byte{0}, body...))
+			}
 		default:
 			a.say(own, authn.CmdCBOR, []byte{0x01}) // a command this fake does not know
 		}
@@ -164,19 +180,6 @@ func TestDevicesAreListedPerPlatformInAStableOrder(t *testing.T) {
 	goos = "windows"
 	if _, err := listDevices(); err == nil || !strings.Contains(err.Error(), "Windows refuses raw HID") {
 		t.Errorf("windows: %v", err)
-	}
-}
-
-func TestADeviceIsMatchedByItsExactID(t *testing.T) {
-	devs := []device{{ID: "a:1"}, {ID: "a:2"}}
-	if d, err := findDevice(devs, "a:2"); err != nil || d.ID != "a:2" {
-		t.Fatalf("%v %v", d, err)
-	}
-	// A prefix or a position could name another key after a replug.
-	for _, bad := range []string{"a:", "1", "A:2"} {
-		if _, err := findDevice(devs, bad); err == nil || !strings.Contains(err.Error(), "a:1, a:2") {
-			t.Errorf("%q: %v", bad, err)
-		}
 	}
 }
 

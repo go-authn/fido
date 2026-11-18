@@ -34,6 +34,15 @@ type fake struct {
 	closed                           bool
 	writes                           int // how many times a command asked to WRITE
 	identity                         authn.Identity
+	dev                              device
+	identityErr                      error
+	// names: stored is what the key holds, refuses makes it hide it after
+	// SetName (the silent read is refused), the errors are injected.
+	stored                                                string
+	refuses                                               bool
+	setNames                                              []string
+	removedNames                                          int
+	readNameErr, setNameErr, removeNameErr, nameTokensErr error
 
 	// injected errors
 	infoErr, retriesErr, uvErr, setErr, changeErr, tokenErr, bioErr error
@@ -61,7 +70,7 @@ func (f *fake) Bio(authn.Info) (bioAPI, error) {
 	}
 	return f, nil
 }
-func (f *fake) Identity(context.Context) (authn.Identity, error)     { return f.identity, f.infoErr }
+func (f *fake) Identity(context.Context) (authn.Identity, error)     { return f.identity, f.identityErr }
 func (f *fake) Close() error                                         { f.closed = true; return nil }
 func (f *fake) Permissions() authn.Permissions                       { return authn.PermBioEnrollment }
 func (f *fake) SensorInfo(context.Context) (authn.SensorInfo, error) { return f.sensor, f.sensorErr }
@@ -545,7 +554,7 @@ func TestTheRealKeyAdapterHandsOutTheEnrollmentInterface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := realKey{k}
+	r := realKey{k, device{}}
 	if _, err := r.Bio(authn.Info{}); err == nil {
 		t.Error("a key without bio enrollment got an interface")
 	}

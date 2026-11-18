@@ -204,7 +204,18 @@ fido list                                 # every key: id, product, serial, aagu
 fido info                                 # one key in detail
 fido pin set | change
 fido fingerprint add [--name N] | list | rename ID NAME | remove ID
+fido name set NAME | show | remove          # a name stored ON the key
 ```
+
+`fido name set NAME` stores a name in the key itself (a credential under
+`name.fido`; asks for the PIN, and replaces any earlier name so a key never
+holds two). `fido name show` and the NAME column of `fido list` read it with no
+touch and no PIN, and `--device` accepts a name as well as an id (exactly; a
+name on two keys is refused, naming both). A key that will not answer that
+silent read (CTAP 2.1 does not make every key do so) is given a LOCAL alias
+instead, in `<user config dir>/fido/names` (mode 0600), bound to its serial
+number or, when it has none, to its USB port; every command says which of the
+two a key uses ("stored on the key" or "local alias").
 
 With several keys attached, `--device ID` names the one to act on (IDs come from
 `fido list`; they are matched exactly). Without it the person touches the key to
