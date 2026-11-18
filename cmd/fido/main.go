@@ -25,14 +25,13 @@ import (
 	"os/signal"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	xterm "golang.org/x/term"
 
 	authn "github.com/go-authn/fido"
-	linuxfido "github.com/go-gnulinux/fido"
-	macfido "github.com/go-macos/fido"
 )
 
 // keyAPI is the part of *authn.Key the commands use; tests replace it.
@@ -44,6 +43,7 @@ type keyAPI interface {
 	ChangePIN(ctx context.Context, proto authn.PINProtocol, cur, newPIN string, minLen uint) error
 	PINToken(ctx context.Context, pin string, proto authn.PINProtocol, perms authn.Permissions, rpID string) (authn.Token, error)
 	Bio(info authn.Info) (bioAPI, error)
+	Identity(context.Context) (authn.Identity, error)
 	Close() error
 }
 
@@ -68,34 +68,8 @@ func (r realKey) Bio(info authn.Info) (bioAPI, error) {
 	return b, nil
 }
 
-// The transports, replaced by tests.
-var (
-	openMac   = macfido.Open
-	openLinux = linuxfido.Open
-)
-
 // goos is replaced by tests.
 var goos = runtime.GOOS
-
-// openKey opens the attached key over the operating system's transport; tests
-// replace it.
-var openKey = func(ctx context.Context) (keyAPI, error) {
-	var k *authn.Key
-	var err error
-	switch goos {
-	case "darwin":
-		k, err = openMac(ctx)
-	case "linux":
-		k, err = openLinux(ctx)
-	default:
-		return nil, fmt.Errorf("no CTAP transport for %s: Windows refuses raw HID to a process that is not elevated, "+
-			"so PIN and fingerprint management need macOS or Linux", goos)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return realKey{k}, nil
-}
 
 // The terminal, replaceable by tests.
 var (
@@ -164,10 +138,16 @@ func main() {
 	defer stop()
 	root := RootCmd()
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(root.ErrOrStderr(), "fido: "+err.Error())
+		fmt.Fprintln(root.ErrOrStderr(), errorLine(err))
 		stop()
 		osExit(1)
 	}
+}
+
+// errorLine is the one line an error is reported as. The library's errors
+// already start with "fido: ", so the program's own prefix is not added twice.
+func errorLine(err error) string {
+	return "fido: " + strings.TrimPrefix(err.Error(), "fido: ")
 }
 
 // RootCmd builds the command tree.
@@ -178,7 +158,8 @@ func RootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(infoCmd(), pinCmd(), fingerprintCmd())
+	root.PersistentFlags().String("device", "", "act on the key with this ID (see `fido list`); with several keys attached and no --device, touch the one to use")
+	root.AddCommand(listCmd(), infoCmd(), pinCmd(), fingerprintCmd())
 	return root
 }
 
@@ -235,7 +216,7 @@ func infoCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := ctxOf(cmd)
-			k, err := openKey(ctx)
+			k, err := openKey(cmd, false)
 			if err != nil {
 				return err
 			}
@@ -247,7 +228,7 @@ func infoCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "versions:       %v\n", info.Versions)
 			fmt.Fprintf(out, "aaguid:         %x\n", info.AAGUID)
-			fmt.Fprintf(out, "options:        %s\n", info)
+			fmt.Fprintf(out, "options:        %s\n", optionsLine(info))
 			fmt.Fprintf(out, "pin protocols:  %v\n", info.PINProtocols)
 			if info.Has("clientPin") {
 				fmt.Fprintf(out, "PIN:            set (minimum %d characters)\n", minLen(info))
@@ -283,6 +264,26 @@ func infoCmd() *cobra.Command {
 	}
 }
 
+// optionsLine renders the options alone, sorted: a true option by its name, a
+// false one as name=false, because in CTAP 2.1 "uv" false (capable, not set up)
+// and "uv" absent (not capable) mean different things.
+func optionsLine(info authn.Info) string {
+	names := make([]string, 0, len(info.Options))
+	for n := range info.Options {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	for i, n := range names {
+		if !info.Options[n] {
+			names[i] = n + "=false"
+		}
+	}
+	if len(names) == 0 {
+		return "none declared"
+	}
+	return strings.Join(names, ", ")
+}
+
 func minLen(info authn.Info) uint {
 	if info.MinPINLength == 0 {
 		return authn.DefaultMinPINLength
@@ -299,7 +300,7 @@ func pinCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := ctxOf(cmd)
-			k, err := openKey(ctx)
+			k, err := openKey(cmd, true)
 			if err != nil {
 				return err
 			}
@@ -332,7 +333,7 @@ func pinCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := ctxOf(cmd)
-			k, err := openKey(ctx)
+			k, err := openKey(cmd, true)
 			if err != nil {
 				return err
 			}
@@ -391,9 +392,9 @@ func checkRetries(ctx context.Context, cmd *cobra.Command, k keyAPI) error {
 
 // session opens the key and returns what a fingerprint command needs: the
 // enrollment interface and a token from the PIN.
-func session(cmd *cobra.Command, pinFile string) (keyAPI, bioAPI, authn.Token, error) {
+func session(cmd *cobra.Command, pinFile string, write bool) (keyAPI, bioAPI, authn.Token, error) {
 	ctx := ctxOf(cmd)
-	k, err := openKey(ctx)
+	k, err := openKey(cmd, write)
 	if err != nil {
 		return nil, nil, authn.Token{}, err
 	}
@@ -438,7 +439,7 @@ func fingerprintCmd() *cobra.Command {
 		Short: "Enrol a new fingerprint",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			k, b, tok, err := session(cmd, pinFile)
+			k, b, tok, err := session(cmd, pinFile, true)
 			if err != nil {
 				return err
 			}
@@ -479,7 +480,7 @@ func fingerprintCmd() *cobra.Command {
 		Short: "List the enrolled fingerprints",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			k, b, tok, err := session(cmd, pinFile)
+			k, b, tok, err := session(cmd, pinFile, false)
 			if err != nil {
 				return err
 			}
@@ -510,7 +511,7 @@ func fingerprintCmd() *cobra.Command {
 			if err != nil || len(id) == 0 {
 				return fmt.Errorf("%q is not a fingerprint id: use the hex id `list` prints", args[0])
 			}
-			k, b, tok, err := session(cmd, pinFile)
+			k, b, tok, err := session(cmd, pinFile, true)
 			if err != nil {
 				return err
 			}
@@ -527,7 +528,7 @@ func fingerprintCmd() *cobra.Command {
 			if err != nil || len(id) == 0 {
 				return fmt.Errorf("%q is not a fingerprint id: use the hex id `list` prints", args[0])
 			}
-			k, b, tok, err := session(cmd, pinFile)
+			k, b, tok, err := session(cmd, pinFile, true)
 			if err != nil {
 				return err
 			}
