@@ -2,14 +2,16 @@
 // the CTAP 2.1 commands of github.com/go-authn/fido.
 //
 //	fido info
-//	fido pin set     [--pin-file FILE]
-//	fido pin change  [--pin-file FILE] [--new-pin-file FILE]
-//	fido fingerprint add [--name N] [--timeout D] [--pin-file FILE]
-//	fido fingerprint list|rename ID NAME|remove ID [--pin-file FILE]
+//	fido pin set     [--pin-file FILE | --pin-from REF]
+//	fido pin change  [--pin-file FILE | --pin-from REF] [--new-pin-file FILE | --new-pin-from REF]
+//	fido fingerprint add [--name N] [--timeout D] [--pin-file FILE | --pin-from REF]
+//	fido fingerprint list|rename ID NAME|remove ID [--pin-file FILE | --pin-from REF]
 //
-// A PIN is read from the terminal with echo off (a new one is typed twice) or
-// from a regular file readable by its owner alone (--pin-file), and never from
-// an argument or an environment variable. The library takes a PIN as a Go
+// A PIN is read from the terminal with echo off (a new one is typed twice),
+// from a regular file readable by its owner alone (--pin-file), or from a
+// secret manager (--pin-from keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT
+// or file:PATH; see github.com/go-authn/secretsource), and never from an
+// argument or an environment variable. The library takes a PIN as a Go
 // string, which cannot be wiped; the byte buffers this command reads it into
 // are.
 package main
@@ -32,6 +34,7 @@ import (
 	xterm "golang.org/x/term"
 
 	authn "github.com/go-authn/fido"
+	"github.com/go-authn/secretsource"
 )
 
 // keyAPI is the part of *authn.Key the commands use; tests replace it.
@@ -81,7 +84,7 @@ var (
 var readTerminal = func(cmd *cobra.Command, prompt string) ([]byte, error) {
 	fd := int(os.Stdin.Fd())
 	if !isTerminal(fd) {
-		return nil, errors.New("no terminal to ask for a PIN: use --pin-file")
+		return nil, errors.New("no terminal to ask for a PIN: use --pin-file or --pin-from")
 	}
 	fmt.Fprint(cmd.ErrOrStderr(), prompt)
 	b, err := readPassword(fd)
@@ -90,44 +93,49 @@ var readTerminal = func(cmd *cobra.Command, prompt string) ([]byte, error) {
 }
 
 // maxSecretFile bounds what a PIN file may hold.
-const maxSecretFile = 4096
+const maxSecretFile = secretsource.MaxSize
+
+// readRef resolves a secretsource reference (file:, keychain:,
+// secretservice:). The bytes are the caller's to wipe.
+func openRef(ctx context.Context, ref string) ([]byte, error) {
+	s, err := secretsource.Open(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return s.Bytes(), nil
+}
+
+// readRef is the manager lookup; tests replace it.
+var readRef = openRef
 
 // readSecretFile reads a PIN from a regular file that its owner alone can
 // read or write, and strips one trailing newline.
 func readSecretFile(path string) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
+	return openRef(context.Background(), "file:"+path)
+}
+
+// pinSrc is where a PIN comes from when it is not typed: a file (--pin-file)
+// or a secretsource reference (--pin-from). Both empty means the terminal.
+type pinSrc struct{ file, from string }
+
+// read returns the PIN, or (nil, false, nil) when the terminal is to be asked.
+func (s pinSrc) read(cmd *cobra.Command) ([]byte, bool, error) {
+	switch {
+	case s.from != "":
+		b, err := readRef(ctxOf(cmd), s.from)
+		return b, true, err
+	case s.file != "":
+		b, err := readSecretFile(s.file)
+		return b, true, err
 	}
-	defer f.Close()
-	// Checked on the open descriptor, not the path, so the file cannot be
-	// swapped between the check and the read.
-	st, err := f.Stat()
-	if err == nil && !st.Mode().IsRegular() {
-		err = fmt.Errorf("%s: not a regular file", path)
-	}
-	if err == nil && st.Mode().Perm()&0o077 != 0 {
-		err = fmt.Errorf("%s: mode %04o, must not be readable or writable by group or others", path, st.Mode().Perm())
-	}
-	if err != nil {
-		return nil, err
-	}
-	b, err := io.ReadAll(io.LimitReader(f, maxSecretFile+1))
-	if err == nil && len(b) > maxSecretFile {
-		err = fmt.Errorf("%s: longer than %d bytes", path, maxSecretFile)
-	}
-	if err != nil {
-		clear(b)
-		return nil, err
-	}
-	n := len(b)
-	if n > 0 && b[n-1] == '\n' {
-		n--
-		if n > 0 && b[n-1] == '\r' {
-			n--
-		}
-	}
-	return b[:n], nil
+	return nil, false, nil
+}
+
+// addFlags registers --<name>-file and --<name>-from, which exclude each other.
+func (s *pinSrc) addFlags(cmd *cobra.Command, name, what string) {
+	cmd.Flags().StringVar(&s.file, name+"-file", "", "read "+what+" from this file (mode 0600 or stricter) instead of the terminal")
+	cmd.Flags().StringVar(&s.from, name+"-from", "", "read "+what+" from a secret manager instead of the terminal: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or file:PATH")
+	cmd.MarkFlagsMutuallyExclusive(name+"-file", name+"-from")
 }
 
 // osExit is replaced by tests.
@@ -180,17 +188,17 @@ func protocolOf(info authn.Info) authn.PINProtocol {
 }
 
 // readPIN gets a PIN from the file or the terminal.
-func readPIN(cmd *cobra.Command, file, prompt string) ([]byte, error) {
-	if file != "" {
-		return readSecretFile(file)
+func readPIN(cmd *cobra.Command, src pinSrc, prompt string) ([]byte, error) {
+	if b, ok, err := src.read(cmd); ok {
+		return b, err
 	}
 	return readTerminal(cmd, prompt)
 }
 
-// readNewPIN gets a new PIN: from the file, or typed twice.
-func readNewPIN(cmd *cobra.Command, file string) ([]byte, error) {
-	if file != "" {
-		return readSecretFile(file)
+// readNewPIN gets a new PIN: from the file or manager, or typed twice.
+func readNewPIN(cmd *cobra.Command, src pinSrc) ([]byte, error) {
+	if b, ok, err := src.read(cmd); ok {
+		return b, err
 	}
 	a, err := readTerminal(cmd, "New PIN: ")
 	if err != nil {
@@ -293,7 +301,7 @@ func minLen(info authn.Info) uint {
 
 func pinCmd() *cobra.Command {
 	pin := &cobra.Command{Use: "pin", Short: "Set or change the key's PIN"}
-	var setFile string
+	var setFile pinSrc
 	set := &cobra.Command{
 		Use:   "set",
 		Short: "Set the PIN of a key that has none",
@@ -324,9 +332,9 @@ func pinCmd() *cobra.Command {
 			return nil
 		},
 	}
-	set.Flags().StringVar(&setFile, "pin-file", "", "read the new PIN from this file (mode 0600 or stricter) instead of the terminal")
+	setFile.addFlags(set, "pin", "the new PIN")
 
-	var curFile, newFile string
+	var curFile, newFile pinSrc
 	change := &cobra.Command{
 		Use:   "change",
 		Short: "Change the PIN",
@@ -365,8 +373,8 @@ func pinCmd() *cobra.Command {
 			return nil
 		},
 	}
-	change.Flags().StringVar(&curFile, "pin-file", "", "read the current PIN from this file (mode 0600 or stricter) instead of the terminal")
-	change.Flags().StringVar(&newFile, "new-pin-file", "", "read the new PIN from this file (mode 0600 or stricter) instead of the terminal")
+	curFile.addFlags(change, "pin", "the current PIN")
+	newFile.addFlags(change, "new-pin", "the new PIN")
 	pin.AddCommand(set, change)
 	return pin
 }
@@ -392,7 +400,7 @@ func checkRetries(ctx context.Context, cmd *cobra.Command, k keyAPI) error {
 
 // session opens the key and returns what a fingerprint command needs: the
 // enrollment interface and a token from the PIN.
-func session(cmd *cobra.Command, pinFile string, write bool) (keyAPI, bioAPI, authn.Token, error) {
+func session(cmd *cobra.Command, pinFile pinSrc, write bool) (keyAPI, bioAPI, authn.Token, error) {
 	ctx := ctxOf(cmd)
 	k, err := openKey(cmd, write)
 	if err != nil {
@@ -433,7 +441,7 @@ func session(cmd *cobra.Command, pinFile string, write bool) (keyAPI, bioAPI, au
 
 func fingerprintCmd() *cobra.Command {
 	fp := &cobra.Command{Use: "fingerprint", Aliases: []string{"fp"}, Short: "Enrol and manage fingerprints"}
-	var pinFile string
+	var pinFile pinSrc
 	add := &cobra.Command{
 		Use:   "add",
 		Short: "Enrol a new fingerprint",
@@ -537,7 +545,7 @@ func fingerprintCmd() *cobra.Command {
 		},
 	}
 	for _, c := range []*cobra.Command{add, list, rename, remove} {
-		c.Flags().StringVar(&pinFile, "pin-file", "", "read the PIN from this file (mode 0600 or stricter) instead of the terminal")
+		pinFile.addFlags(c, "pin", "the PIN")
 	}
 	fp.AddCommand(add, list, rename, remove)
 	return fp

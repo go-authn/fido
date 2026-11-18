@@ -1,5 +1,12 @@
 # Changelog
 
+## cmd/fido v0.3.0
+
+- Added: `--pin-from REF` and `--new-pin-from REF` read the PIN from a secret
+  manager (`keychain:SERVICE/ACCOUNT`, `secretservice:SERVICE/ACCOUNT`,
+  `file:PATH`) through github.com/go-authn/secretsource. Each is exclusive with
+  its `-file` flag, which is unchanged.
+
 ## v0.11.0
 
 - Added: `Select(ctx, []Candidate)`: with several keys attached, ask every one
