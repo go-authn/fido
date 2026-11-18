@@ -120,6 +120,74 @@ func openRef(ctx context.Context, ref string) ([]byte, error) {
 // readRef is the manager lookup; tests replace it.
 var readRef = openRef
 
+// The write side of the same references, replaceable by tests.
+var (
+	storePIN    = secretsource.Store
+	generatePIN = secretsource.Generate
+)
+
+// maxPINLen is the longest PIN CTAP 2.1 accepts (63 bytes, 6.5.5.5).
+const maxPINLen = 63
+
+// saveOpts are the flags that put a new PIN into a secret manager.
+type saveOpts struct {
+	to       string
+	generate int
+	replace  bool
+}
+
+func (o *saveOpts) addFlags(cmd *cobra.Command, src ...string) {
+	cmd.Flags().StringVar(&o.to, "save-to", "", "store the new PIN in a secret manager (keychain:, secretservice:, keepassxc:URL) BEFORE setting it on the key")
+	cmd.Flags().IntVar(&o.generate, "generate", 0, "draw N random characters as the new PIN (needs --save-to; N from the key's minimum to 63)")
+	cmd.Flags().BoolVar(&o.replace, "replace", false, "overwrite an existing entry at --save-to")
+	for _, s := range src {
+		cmd.MarkFlagsMutuallyExclusive("generate", s)
+	}
+}
+
+// newPIN gets the new PIN: drawn (--generate) or read as before.
+func (o *saveOpts) newPIN(cmd *cobra.Command, src pinSrc, info authn.Info) ([]byte, error) {
+	if !cmd.Flags().Changed("generate") {
+		return readNewPIN(cmd, src)
+	}
+	if o.to == "" {
+		return nil, errors.New("--generate needs --save-to: a PIN nobody could read back would lock the key")
+	}
+	if min := int(minLen(info)); o.generate < min || o.generate > maxPINLen {
+		return nil, fmt.Errorf("--generate %d: this key wants a PIN of %d to %d characters", o.generate, min, maxPINLen)
+	}
+	return generatePIN(o.generate)
+}
+
+// undo runs when changing the PIN failed after the new one was stored. The key
+// still has the CURRENT PIN, and the entry may be where that PIN was read from,
+// so with --replace the current PIN is put back; without it the entry was new
+// and holds a PIN that was never set.
+func (o *saveOpts) undo(cmd *cobra.Command, cur []byte, cause error) error {
+	if o.to == "" {
+		return cause
+	}
+	if !o.replace {
+		return fmt.Errorf("%w (the new PIN stays stored in %s although the key did not take it)", cause, o.to)
+	}
+	if err := storePIN(ctxOf(cmd), o.to, cur, secretsource.StoreOptions{Replace: true}); err != nil {
+		return fmt.Errorf("%w (and the current PIN could not be put back in %s: %v; the key still has the CURRENT PIN, the entry now holds the NEW one)", cause, o.to, err)
+	}
+	return fmt.Errorf("%w (the current PIN was put back in %s)", cause, o.to)
+}
+
+// save stores p BEFORE it is set, so a failed store changes nothing on the key.
+func (o *saveOpts) save(cmd *cobra.Command, p []byte) error {
+	if o.to == "" {
+		return nil
+	}
+	if err := storePIN(ctxOf(cmd), o.to, p, secretsource.StoreOptions{Replace: o.replace}); err != nil {
+		return fmt.Errorf("the PIN was not stored in %s, so the key was not touched: %w", o.to, err)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "New PIN stored in %s (not printed).\n", o.to)
+	return nil
+}
+
 // readSecretFile reads a PIN from a regular file that its owner alone can
 // read or write, and strips one trailing newline.
 func readSecretFile(path string) ([]byte, error) {
@@ -314,6 +382,7 @@ func minLen(info authn.Info) uint {
 func pinCmd() *cobra.Command {
 	pin := &cobra.Command{Use: "pin", Short: "Set or change the key's PIN"}
 	var setFile pinSrc
+	var setSave, changeSave saveOpts
 	set := &cobra.Command{
 		Use:   "set",
 		Short: "Set the PIN of a key that has none",
@@ -332,12 +401,18 @@ func pinCmd() *cobra.Command {
 			if info.Has("clientPin") {
 				return errors.New("this key already has a PIN: use `fido pin change`")
 			}
-			p, err := readNewPIN(cmd, setFile)
+			p, err := setSave.newPIN(cmd, setFile, info)
 			if err != nil {
 				return err
 			}
 			defer clear(p)
+			if err := setSave.save(cmd, p); err != nil {
+				return err
+			}
 			if err := k.SetPIN(ctx, protocolOf(info), string(p), info.MinPINLength); err != nil {
+				if setSave.to != "" {
+					err = fmt.Errorf("%w (the PIN stays stored in %s, for a key that has none; use --replace to overwrite it next time)", err, setSave.to)
+				}
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "PIN set.")
@@ -345,6 +420,7 @@ func pinCmd() *cobra.Command {
 		},
 	}
 	setFile.addFlags(set, "pin", "the new PIN")
+	setSave.addFlags(set, "pin-file", "pin-from")
 
 	var curFile, newFile pinSrc
 	change := &cobra.Command{
@@ -373,13 +449,16 @@ func pinCmd() *cobra.Command {
 				return err
 			}
 			defer clear(cur)
-			p, err := readNewPIN(cmd, newFile)
+			p, err := changeSave.newPIN(cmd, newFile, info)
 			if err != nil {
 				return err
 			}
 			defer clear(p)
-			if err := k.ChangePIN(ctx, protocolOf(info), string(cur), string(p), info.MinPINLength); err != nil {
+			if err := changeSave.save(cmd, p); err != nil {
 				return err
+			}
+			if err := k.ChangePIN(ctx, protocolOf(info), string(cur), string(p), info.MinPINLength); err != nil {
+				return changeSave.undo(cmd, cur, err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "PIN changed.")
 			return nil
@@ -387,6 +466,7 @@ func pinCmd() *cobra.Command {
 	}
 	curFile.addFlags(change, "pin", "the current PIN")
 	newFile.addFlags(change, "new-pin", "the new PIN")
+	changeSave.addFlags(change, "new-pin-file", "new-pin-from")
 	pin.AddCommand(set, change)
 	return pin
 }

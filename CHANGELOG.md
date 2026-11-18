@@ -1,5 +1,14 @@
 # Changelog
 
+## cmd/fido v0.7.0
+
+- `pin set` and `pin change` take `--save-to REF`, `--generate N` and `--replace`: the new
+  PIN goes into a secret manager (`keychain:`, `secretservice:`, `keepassxc:URL`) through
+  go-authn/secretsource v0.5.0, drawn with `--generate` (N from the key's minimum to 63).
+  It is stored BEFORE the key is touched, so a failed store changes nothing; if the key
+  refuses afterwards, the error says what the entry holds, and `pin change --replace` puts
+  the current PIN back. Nothing secret is printed.
+
 ## v0.13.1
 
 - Fix: `AuthData.ExtensionOutputs` reported a credProtect output of 0, 4 or 7
