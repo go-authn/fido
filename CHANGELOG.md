@@ -1,5 +1,11 @@
 # Changelog
 
+## cmd/fido v0.6.0
+
+- Fix: `--pin-from keepassxc:by-uuid/...` and `keepassxc:by-path/...` (v0.5.0)
+  crashed KeePassXC 2.8.0 when the entry had no URL. They are refused now;
+  `keepassxc:URL` (the entry's URL field) is the form. go-authn/secretsource v0.3.0.
+
 ## cmd/fido v0.5.0
 
 - `--pin-from` and `--new-pin-from` also take `keepassxc:by-uuid/HEX`,

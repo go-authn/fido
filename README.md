@@ -231,14 +231,16 @@ secret manager, so no plaintext file has to sit on disk (`--pin-from`,
 ```
 fido fingerprint list --pin-from keychain:fido/yubikey-5c          # macOS Keychain
 fido fingerprint list --pin-from secretservice:fido/yubikey-5c     # GNOME Keyring, KWallet, KeePassXC (Secret Service Integration)
-fido fingerprint list --pin-from 'keepassxc:by-path/Yubikey PIN'   # KeePassXC (macOS, Linux), once: secretsource keepassxc associate
+fido fingerprint list --pin-from 'keepassxc:https://fido.invalid/yubikey-5c'   # KeePassXC (macOS, Linux): the entry's URL field; once: secretsource keepassxc associate
 fido fingerprint list --pin-from file:/run/user/1000/pin           # same as --pin-file
 ```
 
 KeePassXC has no Secret Service on macOS; `keepassxc:` talks to its
 browser-integration socket. Enable *Browser Integration* in KeePassXC, run
 `secretsource keepassxc associate` once and approve it there, then check with
-`secretsource check 'keepassxc:by-path/Yubikey PIN'`
+`secretsource check 'keepassxc:https://fido.invalid/yubikey-5c'`; the entry must
+carry that URL in its URL field (lookups by UUID or path are refused: KeePassXC
+2.8.0 crashes on an entry without a URL)
 (`go install github.com/go-authn/secretsource/cmd/secretsource@latest`).
 
 The reference holds no secret; there is no scheme that runs a command. See
