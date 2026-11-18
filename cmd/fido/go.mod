@@ -9,6 +9,7 @@ require (
 	github.com/go-gnulinux/fido v0.6.0
 	github.com/go-macos/fido v0.6.0
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.9
 	golang.org/x/term v0.48.0
 )
 
@@ -20,7 +21,6 @@ require (
 	github.com/go-macos/objc v0.11.2 // indirect
 	github.com/godbus/dbus/v5 v5.2.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect

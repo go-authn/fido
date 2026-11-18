@@ -1,5 +1,12 @@
 # Changelog
 
+## cmd/fido v0.7.1
+
+- Fix: the help showed the global flag as `--device fido list` — pflag takes the
+  first backquoted text of a usage string as the value name. It reads
+  `--device ID` again, and a test walks every flag of every command and refuses
+  a value name that is not one word.
+
 ## cmd/fido v0.7.0
 
 - `pin set` and `pin change` take `--save-to REF`, `--generate N` and `--replace`: the new

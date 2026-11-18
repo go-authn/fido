@@ -246,7 +246,7 @@ func RootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().String("device", "", "act on the key with this ID or name (see `fido list`; a name must be on exactly one key); with several keys attached and no --device, touch the one to use")
+	root.PersistentFlags().String("device", "", "act on the key with this `ID` or name (see fido list; a name must be on exactly one key); with several keys attached and no --device, touch the one to use")
 	root.AddCommand(listCmd(), infoCmd(), nameCmd(), pinCmd(), fingerprintCmd())
 	return root
 }
