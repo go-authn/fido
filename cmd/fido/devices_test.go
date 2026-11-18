@@ -261,6 +261,9 @@ func TestSeveralKeysAndNoDeviceMeansTouchToChoose(t *testing.T) {
 	}
 
 	// Two keys touched at the same instant: a write refuses, a read warns.
+	// (Fresh keys: the ones above still hold replies from the real Select.)
+	a, b = newAnswerKey("Alpha", map[string]bool{"clientPin": true}), newAnswerKey("Beta", map[string]bool{})
+	withDevices(t, []device{a.device("id:a"), b.device("id:b")}, nil)
 	chooseByTouch = func(ctx context.Context, devs []device) (*authn.Selected, error) {
 		k, err := devs[0].open(ctx)
 		if err != nil {
