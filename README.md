@@ -182,6 +182,17 @@ keys touched in the same instant, so a caller about to change something can
 refuse an ambiguous choice; `Key.Identity` says, without a touch, which key is
 which (aaguid, PIN set, fingerprints enrolled).
 
+## Naming a key, on the key
+
+The port a key sits in is not the key, the AAGUID names a model, and most keys
+publish no serial. `Key.SetName` stores a name IN the key: a discoverable
+credential under the reserved relying party `name.fido` (credProtect 1) whose
+user handle is the name (at most 64 bytes of UTF-8, no control characters).
+`Key.ReadName` reads it with no touch and no PIN (getAssertion, `up` false, no
+pinUvAuthParam). CTAP 2.1 does not make every key answer that, so a refused read
+is `ErrNameRefused` and a caller needs a fallback. `SetName` replaces: the old
+name is deleted first (credential management, 6.8), so a key never holds two.
+
 ## The fido command
 
 `cmd/fido` (its own module: `go install github.com/go-authn/fido/cmd/fido@latest`)
