@@ -1,5 +1,13 @@
 # Changelog
 
+## cmd/fido v0.6.1
+
+- Fix: `fido name set` and `fido name remove` failed on a real YubiKey 5 with
+  CTAP2_ERR_PIN_AUTH_INVALID (0x33) although the PIN was accepted: the key keeps
+  one token and the library fetched two (go-authn/fido v0.13.0 asks for each
+  token when it is used). The 0x33 message now says the PIN may have been
+  accepted and that no PIN retry was used.
+
 ## v0.13.0
 
 - Fix (breaking below v1): `SetName` failed on a real YubiKey 5 with
