@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.13.0
+
+- Fix (breaking below v1): `SetName` failed on a real YubiKey 5 with
+  CTAP2_ERR_PIN_AUTH_INVALID (0x33) although the PIN was accepted. An
+  authenticator keeps ONE pinUvAuthToken: a new one replaces the last, and
+  `NameTokens` fetched the make-credential token first and the credential
+  management token second, so makeCredential was authorised by a dead token. The
+  software authenticator kept several tokens and hid it; it now keeps one.
+  `NameTokens` is now opaque (it holds the PIN, which it checked with a token
+  that is discarded) and `SetName`/`RemoveName` ask for each token at the moment
+  it is used: credential management first, makeCredential after the deletes. The
+  exported fields `NameTokens.MakeCredential` and `.CredentialManagement` are
+  gone.
+- Fix: status 0x33 now says what it means: the request's pinUvAuthParam was
+  refused; if a PIN was just accepted, a token was issued but does not authorise
+  this request (replaced by a newer token, or lacking the permission or relying
+  party), and no PIN retry was used.
+
 ## cmd/fido v0.6.0
 
 - Fix: `--pin-from keepassxc:by-uuid/...` and `keepassxc:by-path/...` (v0.5.0)
