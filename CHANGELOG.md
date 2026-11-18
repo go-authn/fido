@@ -1,5 +1,13 @@
 # Changelog
 
+## cmd/fido v0.5.0
+
+- `--pin-from` and `--new-pin-from` also take `keepassxc:by-uuid/HEX`,
+  `keepassxc:by-path/Group/Title` and `keepassxc:URL` (KeePassXC's
+  browser-integration protocol; macOS and Linux) and
+  `secretservice:KEY=VALUE[,...]` (any attributes), through
+  github.com/go-authn/secretsource v0.2.0.
+
 ## cmd/fido v0.4.0
 
 - Added: `fido name set NAME | show | remove`: a name stored on the key
