@@ -4,12 +4,12 @@ go 1.27.4
 
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0
-	github.com/go-authn/fido v0.13.0
+	github.com/go-authn/fido v0.13.1
 	github.com/go-authn/secretsource v0.5.0
 	github.com/go-gnulinux/fido v0.6.0
 	github.com/go-macos/fido v0.6.0
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.9
+	github.com/spf13/pflag v1.1.0
 	golang.org/x/term v0.48.0
 )
 
