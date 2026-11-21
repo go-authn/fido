@@ -187,7 +187,7 @@ var openKey = func(cmd *cobra.Command, write bool) (keyAPI, error) {
 
 	fmt.Fprintf(errw, "%d security keys are attached:\n", len(devs))
 	for _, d := range devs {
-		fmt.Fprintf(errw, "  %s\n", d.Label)
+		fmt.Fprintf(errw, "  %s\n", safe(d.Label))
 	}
 	fmt.Fprintf(errw, "Touch the key to use (%s), or pass --device ID or NAME.\n", selectTimeout)
 	sctx, stop := context.WithTimeout(ctx, selectTimeout)
@@ -197,12 +197,12 @@ var openKey = func(cmd *cobra.Command, write bool) (keyAPI, error) {
 		return nil, err
 	}
 	if len(sel.AlsoTouched) > 0 {
-		warn := fmt.Sprintf("%s and %s were touched at the same time", sel.Label, strings.Join(sel.AlsoTouched, ", "))
+		warn := fmt.Sprintf("%s and %s were touched at the same time", safe(sel.Label), safe(strings.Join(sel.AlsoTouched, ", ")))
 		if write {
 			sel.Key.Close()
 			return nil, fmt.Errorf("%s: nothing was changed; touch ONE key, or pass --device ID", warn)
 		}
-		fmt.Fprintf(errw, "Warning: %s; using %s.\n", warn, sel.Label)
+		fmt.Fprintf(errw, "Warning: %s; using %s.\n", warn, safe(sel.Label))
 	}
 	rk := realKey{sel.Key, devs[sel.Index]}
 	name, _, _ := keyName(ctx, rk)
@@ -214,10 +214,10 @@ var openKey = func(cmd *cobra.Command, write bool) (keyAPI, error) {
 // done to it.
 func announce(w interface{ Write([]byte) (int, error) }, label, name string, write bool) {
 	if write {
-		fmt.Fprintf(w, "This key will be changed: %s%s\n", label, quoted(name))
+		fmt.Fprintf(w, "This key will be changed: %s%s\n", safe(label), quoted(name))
 		return
 	}
-	fmt.Fprintf(w, "Key: %s%s\n", label, quoted(name))
+	fmt.Fprintf(w, "Key: %s%s\n", safe(label), quoted(name))
 }
 
 func listCmd() *cobra.Command {
@@ -237,25 +237,26 @@ func listCmd() *cobra.Command {
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 			fmt.Fprintln(tw, "#\tID\tNAME\tPRODUCT\tSERIAL\tAAGUID\tPIN\tFINGERPRINTS")
 			for i, d := range devs {
-				serial := d.Serial
+				serial := safe(d.Serial)
 				if serial == "" {
 					serial = "-"
 				}
+				devName, devID := safe(d.Name), safe(d.ID)
 				k, err := d.open(ctx)
 				if err != nil {
-					fmt.Fprintf(tw, "%d\t%s\t?\t%s\t%s\t?\t?\t? (%s)\n", i, d.ID, d.Name, serial, oneLine(err))
+					fmt.Fprintf(tw, "%d\t%s\t?\t%s\t%s\t?\t?\t? (%s)\n", i, devID, devName, serial, oneLine(err))
 					continue
 				}
 				rk := realKey{k, d}
 				id, err := rk.Identity(ctx)
 				if err != nil {
 					k.Close()
-					fmt.Fprintf(tw, "%d\t%s\t?\t%s\t%s\t?\t?\t? (%s)\n", i, d.ID, d.Name, serial, oneLine(err))
+					fmt.Fprintf(tw, "%d\t%s\t?\t%s\t%s\t?\t?\t? (%s)\n", i, devID, devName, serial, oneLine(err))
 					continue
 				}
 				name, src, nerr := keyName(ctx, rk)
 				k.Close()
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%x\t%s\t%s\n", i, d.ID, nameCell(name, src, nerr), d.Name, serial, id.AAGUID, pinWord(id), fingerprintWord(id))
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%x\t%s\t%s\n", i, devID, nameCell(name, src, nerr), devName, serial, id.AAGUID, pinWord(id), fingerprintWord(id))
 			}
 			return tw.Flush()
 		},
@@ -286,7 +287,7 @@ func fingerprintWord(id authn.Identity) string {
 
 // oneLine trims a library error to what a table cell can hold.
 func oneLine(err error) string {
-	return strings.TrimPrefix(strings.ReplaceAll(err.Error(), "\n", " "), "fido: ")
+	return safe(strings.TrimPrefix(strings.ReplaceAll(err.Error(), "\n", " "), "fido: "))
 }
 
 // nameCell is the NAME column: the name, marked when it comes from the local
@@ -297,11 +298,11 @@ func nameCell(name string, src nameSource, err error) string {
 	case err != nil:
 		return "? (" + oneLine(err) + ")"
 	case src == nameAlias:
-		return name + " (alias)"
+		return safe(name) + " (alias)"
 	case src == nameHidden:
 		return "? (will not show it without a PIN)"
 	case name == "":
 		return "-"
 	}
-	return name
+	return safe(name)
 }

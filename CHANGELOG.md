@@ -1,5 +1,16 @@
 # Changelog
 
+## cmd/fido v0.7.2
+
+- Security (low): text the KEY supplies reached the terminal raw. A fingerprint
+  template name (`fingerprint list`), a key name (`name show`), a USB product or
+  serial string (`list`, key selection), a version or option name (`info`) and
+  error text that quotes one were printed as they came, so a key naming a
+  template `...ESC[2J...` drove the terminal of whoever listed it. Every such
+  string now goes through one function that writes controls, ESC, CR, bidi and
+  other format characters, line separators and invalid UTF-8 as `\x1b`/`‮`
+  escapes; printable text is unchanged.
+
 ## cmd/fido v0.7.1
 
 - Fix: the help showed the global flag as `--device fido list` — pflag takes the

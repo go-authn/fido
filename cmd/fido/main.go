@@ -235,7 +235,7 @@ func main() {
 // errorLine is the one line an error is reported as. The library's errors
 // already start with "fido: ", so the program's own prefix is not added twice.
 func errorLine(err error) string {
-	return "fido: " + strings.TrimPrefix(err.Error(), "fido: ")
+	return "fido: " + safe(strings.TrimPrefix(err.Error(), "fido: "))
 }
 
 // RootCmd builds the command tree.
@@ -314,7 +314,7 @@ func infoCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "versions:       %v\n", info.Versions)
+			fmt.Fprintf(out, "versions:       %s\n", safe(fmt.Sprint(info.Versions)))
 			fmt.Fprintf(out, "aaguid:         %x\n", info.AAGUID)
 			fmt.Fprintf(out, "options:        %s\n", optionsLine(info))
 			fmt.Fprintf(out, "pin protocols:  %v\n", info.PINProtocols)
@@ -369,7 +369,7 @@ func optionsLine(info authn.Info) string {
 	if len(names) == 0 {
 		return "none declared"
 	}
-	return strings.Join(names, ", ")
+	return safe(strings.Join(names, ", "))
 }
 
 func minLen(info authn.Info) uint {
@@ -597,7 +597,7 @@ func fingerprintCmd() *cobra.Command {
 				if name == "" {
 					name = "(no name)"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s  %s\n", hex.EncodeToString(e.ID), name)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s  %s\n", hex.EncodeToString(e.ID), safe(name))
 			}
 			return nil
 		},
