@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -146,6 +148,33 @@ func keyName(ctx context.Context, k keyAPI) (string, nameSource, error) {
 	return "", nameNone, err
 }
 
+// safe makes a string the KEY supplied (a template or key name, a product
+// string, a version or option name, an error that quotes one) fit for a
+// terminal: every rune that is not printable (controls, ESC, CR, bidi and other
+// format characters, line and paragraph separators, invalid UTF-8) is written
+// as an escape, so nothing a key says can move the cursor, retitle the window
+// or forge a line. Printable text is left as it is.
+func safe(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case unicode.IsPrint(r):
+			b.WriteRune(r)
+		case r < 0x80:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case r <= 0xffff:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			fmt.Fprintf(&b, `\U%08x`, r)
+		}
+		i += n
+	}
+	return b.String()
+}
+
 // quoted renders a name for a message.
 func quoted(name string) string {
 	if name == "" {
@@ -176,7 +205,7 @@ func nameCmd() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "name: none (%s)\n", src)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "name: %s (%s)\n", name, src)
+			fmt.Fprintf(cmd.OutOrStdout(), "name: %s (%s)\n", safe(name), src)
 			return nil
 		},
 	}
