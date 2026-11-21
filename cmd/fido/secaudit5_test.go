@@ -100,6 +100,7 @@ func TestSafeEscapesWhatIsNotPrintableAndKeepsTheRest(t *testing.T) {
 		{"a" + string(rune(0x200b)) + "b", "a" + bs + "u200bb"},
 		{"a" + string(rune(0xad)) + "b", "a" + bs + "u00adb"},
 		{"a" + string(rune(0x2028)) + "b", "a" + bs + "u2028b"},
+		{"a" + string(rune(0xa0)) + "b", "a" + bs + "u00a0b"}, // a space that is not a space: spoofing
 		{"a\xffb", "a" + bs + "xffb"},
 		{"a" + string(rune(0xe0001)) + "b", "a" + bs + "U000e0001b"},
 		{"a\x7fb", "a" + bs + "x7fb"},
