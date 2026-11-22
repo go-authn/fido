@@ -1,5 +1,14 @@
 # Changelog
 
+## cmd/fido v0.7.3
+
+- Security (low): `pin set`, `pin change` and every `fingerprint` command (the
+  PIN from `--pin-from`, `--pin-file` or the terminal) hand the key a `[]byte`
+  (go-authn/fido v0.15.0: `SetPINBytes`, `ChangePINBytes`, `PINTokenBytes`) and
+  wipe it afterwards. Before, `string(pin)` left a copy that could not be
+  wiped. `name` commands still go through `NameTokens`, which takes a string;
+  not changed here.
+
 ## v0.15.0
 
 - `Key.PINTokenBytes`, `Key.SetPINBytes`, `Key.ChangePINBytes` and
