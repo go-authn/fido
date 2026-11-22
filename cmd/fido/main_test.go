@@ -26,16 +26,19 @@ type fake struct {
 
 	// recorded
 	setPIN, curPIN, newPIN, tokenPIN string
-	proto                            authn.PINProtocol
-	perms                            authn.Permissions
-	timeout                          time.Duration
-	renamed, removed                 []byte
-	renamedTo                        string
-	closed                           bool
-	writes                           int // how many times a command asked to WRITE
-	identity                         authn.Identity
-	dev                              device
-	identityErr                      error
+	// held is every PIN slice the key was handed, by reference: a test reads
+	// it after the command to see that the slice was wiped.
+	held             [][]byte
+	proto            authn.PINProtocol
+	perms            authn.Permissions
+	timeout          time.Duration
+	renamed, removed []byte
+	renamedTo        string
+	closed           bool
+	writes           int // how many times a command asked to WRITE
+	identity         authn.Identity
+	dev              device
+	identityErr      error
 	// names: stored is what the key holds, refuses makes it hide it after
 	// SetName (the silent read is refused), the errors are injected.
 	stored                                                string
@@ -52,16 +55,19 @@ type fake struct {
 func (f *fake) GetInfo(context.Context) (authn.Info, error)       { return f.info, f.infoErr }
 func (f *fake) PINRetries(context.Context) (authn.Retries, error) { return f.retries, f.retriesErr }
 func (f *fake) UVRetries(context.Context) (int, error)            { return f.uvRetries, f.uvErr }
-func (f *fake) SetPIN(_ context.Context, p authn.PINProtocol, n string, _ uint) error {
-	f.proto, f.setPIN = p, n
+func (f *fake) SetPINBytes(_ context.Context, p authn.PINProtocol, n []byte, _ uint) error {
+	f.proto, f.setPIN = p, string(n)
+	f.held = append(f.held, n)
 	return f.setErr
 }
-func (f *fake) ChangePIN(_ context.Context, p authn.PINProtocol, c, n string, _ uint) error {
-	f.proto, f.curPIN, f.newPIN = p, c, n
+func (f *fake) ChangePINBytes(_ context.Context, p authn.PINProtocol, c, n []byte, _ uint) error {
+	f.proto, f.curPIN, f.newPIN = p, string(c), string(n)
+	f.held = append(f.held, c, n)
 	return f.changeErr
 }
-func (f *fake) PINToken(_ context.Context, pin string, p authn.PINProtocol, perms authn.Permissions, _ string) (authn.Token, error) {
-	f.tokenPIN, f.proto, f.perms = pin, p, perms
+func (f *fake) PINTokenBytes(_ context.Context, pin []byte, p authn.PINProtocol, perms authn.Permissions, _ string) (authn.Token, error) {
+	f.tokenPIN, f.proto, f.perms = string(pin), p, perms
+	f.held = append(f.held, pin)
 	return authn.Token{}, f.tokenErr
 }
 func (f *fake) Bio(authn.Info) (bioAPI, error) {

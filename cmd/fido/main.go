@@ -42,9 +42,10 @@ type keyAPI interface {
 	GetInfo(context.Context) (authn.Info, error)
 	PINRetries(context.Context) (authn.Retries, error)
 	UVRetries(context.Context) (int, error)
-	SetPIN(ctx context.Context, proto authn.PINProtocol, newPIN string, minLen uint) error
-	ChangePIN(ctx context.Context, proto authn.PINProtocol, cur, newPIN string, minLen uint) error
-	PINToken(ctx context.Context, pin string, proto authn.PINProtocol, perms authn.Permissions, rpID string) (authn.Token, error)
+	// The PIN forms take a slice, which the command wipes: a string cannot be.
+	SetPINBytes(ctx context.Context, proto authn.PINProtocol, newPIN []byte, minLen uint) error
+	ChangePINBytes(ctx context.Context, proto authn.PINProtocol, cur, newPIN []byte, minLen uint) error
+	PINTokenBytes(ctx context.Context, pin []byte, proto authn.PINProtocol, perms authn.Permissions, rpID string) (authn.Token, error)
 	Bio(info authn.Info) (bioAPI, error)
 	Identity(context.Context) (authn.Identity, error)
 	ReadName(context.Context) (string, error)
@@ -409,7 +410,7 @@ func pinCmd() *cobra.Command {
 			if err := setSave.save(cmd, p); err != nil {
 				return err
 			}
-			if err := k.SetPIN(ctx, protocolOf(info), string(p), info.MinPINLength); err != nil {
+			if err := k.SetPINBytes(ctx, protocolOf(info), p, info.MinPINLength); err != nil {
 				if setSave.to != "" {
 					err = fmt.Errorf("%w (the PIN stays stored in %s, for a key that has none; use --replace to overwrite it next time)", err, setSave.to)
 				}
@@ -457,7 +458,7 @@ func pinCmd() *cobra.Command {
 			if err := changeSave.save(cmd, p); err != nil {
 				return err
 			}
-			if err := k.ChangePIN(ctx, protocolOf(info), string(cur), string(p), info.MinPINLength); err != nil {
+			if err := k.ChangePINBytes(ctx, protocolOf(info), cur, p, info.MinPINLength); err != nil {
 				return changeSave.undo(cmd, cur, err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "PIN changed.")
@@ -524,7 +525,7 @@ func session(cmd *cobra.Command, pinFile pinSrc, write bool) (keyAPI, bioAPI, au
 		return fail(err)
 	}
 	defer clear(p)
-	tok, err := k.PINToken(ctx, string(p), protocolOf(info), b.Permissions(), "")
+	tok, err := k.PINTokenBytes(ctx, p, protocolOf(info), b.Permissions(), "")
 	if err != nil {
 		return fail(err)
 	}

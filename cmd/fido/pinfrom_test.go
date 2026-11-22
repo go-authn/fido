@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -52,6 +53,41 @@ func TestPinFromEveryCommand(t *testing.T) {
 	}
 	if len(*asked) == 0 {
 		t.Fatal("the manager was never asked")
+	}
+}
+
+// TestPinFromWipesWhatItRead: the PIN reaches the key as a slice, never as a
+// string, and the command wipes that slice when it is done with it. The fake
+// keeps the slices it was handed, so a command that did not wipe leaves them
+// holding the PIN here.
+func TestPinFromWipesWhatItRead(t *testing.T) {
+	fakeRefs(t, map[string]string{"keychain:fido/key": "1234", "keychain:fido/new": "5678"})
+	for name, c := range map[string]struct {
+		args  []string
+		clear bool // the key has no PIN yet
+		want  int  // slices handed to the key
+	}{
+		"pin set":       {[]string{"pin", "set", "--pin-from", "keychain:fido/key"}, true, 1},
+		"pin change":    {[]string{"pin", "change", "--pin-from", "keychain:fido/key", "--new-pin-from", "keychain:fido/new"}, false, 2},
+		"fingerprint":   {[]string{"fingerprint", "list", "--pin-from", "keychain:fido/key"}, false, 1},
+		"fingerprint +": {[]string{"fingerprint", "add", "--pin-from", "keychain:fido/key"}, false, 1},
+	} {
+		f := newFake()
+		if c.clear {
+			delete(f.info.Options, "clientPin")
+		}
+		use(t, f, nil)
+		if _, _, err := run(c.args...); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(f.held) != c.want {
+			t.Fatalf("%s: the key was handed %d slices, want %d", name, len(f.held), c.want)
+		}
+		for i, b := range f.held {
+			if len(b) == 0 || !bytes.Equal(b, make([]byte, len(b))) {
+				t.Errorf("%s: slice %d still holds %q after the command", name, i, b)
+			}
+		}
 	}
 }
 
