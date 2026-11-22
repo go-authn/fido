@@ -39,7 +39,9 @@ func TestANegativeRetryCountIsRefused(t *testing.T) {
 // "at least nothing". A bound no PIN can meet (over 63 bytes) is refused by
 // name instead.
 func TestAMinPINLengthNoPINCanMeet(t *testing.T) {
-	for _, min := range []uint{MaxPINBytes + 1, 1 << 31, 1 << 32, 1 << 63, ^uint(0)} {
+	// Written as uint64 and narrowed, so the file builds where uint is 32 bits.
+	for _, v := range []uint64{MaxPINBytes + 1, 1 << 31, 1 << 32, 1 << 63, ^uint64(0)} {
+		min := uint(min(v, uint64(^uint(0)))) // clamped on a 32-bit uint, exact on 64
 		err := CheckNewPIN("1", min)
 		if err == nil {
 			t.Errorf("min %d: a one-character PIN was accepted", min)
