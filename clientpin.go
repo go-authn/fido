@@ -105,6 +105,11 @@ func (k *Key) PINRetries(ctx context.Context) (Retries, error) {
 	if err := field(raw, cpRespPINRetries, &r.PIN, "retry count"); err != nil {
 		return Retries{}, err
 	}
+	// Unsigned in CTAP 2.1 6.5.5.2: a negative count is a lie that "== 0"
+	// checks would read as "not blocked".
+	if r.PIN < 0 {
+		return Retries{}, fmt.Errorf("fido: the retry count is %d, and a count is not negative", r.PIN)
+	}
 	if m, ok := raw[cpRespPowerCycle]; ok {
 		if err := cbor.Unmarshal(m, &r.PowerCycle); err != nil {
 			return Retries{}, fmt.Errorf("fido: the power-cycle state: %w", err)
@@ -281,6 +286,9 @@ func (k *Key) UVRetries(ctx context.Context) (int, error) {
 	var n int
 	if err := field(raw, cpRespUVRetries, &n, "UV retry count"); err != nil {
 		return 0, err
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("fido: the UV retry count is %d, and a count is not negative", n)
 	}
 	return n, nil
 }

@@ -37,7 +37,9 @@ func CheckNewPIN(pin string, minLen uint) error {
 	if !utf8.ValidString(pin) {
 		return fmt.Errorf("fido: the PIN is not valid UTF-8")
 	}
-	if n := utf8.RuneCountInString(pin); n < int(minLen) {
+	// The key supplies minLen. Compared as unsigned: int(minLen) of a value
+	// above MaxInt is negative and the check would pass everything.
+	if n := utf8.RuneCountInString(pin); uint64(n) < uint64(minLen) {
 		return fmt.Errorf("fido: the PIN has %d characters; this authenticator wants at least %d", n, minLen)
 	}
 	if len(pin) > MaxPINBytes {
