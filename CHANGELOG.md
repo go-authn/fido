@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.14.0
+
+Security audit 2026-11-21.
+
+- `PINRetries` and `UVRetries` refuse a negative count (CTAP 2.1 6.5.5.2 and
+  6.5.5.3 define it as unsigned). Before, `{PIN: -1}` passed a `== 0` "blocked"
+  check as "not blocked". A key that answered a negative number now gives an
+  error.
+- `CheckNewPIN` compares the key-supplied minimum as unsigned. Before,
+  `int(minLen)` of a value above MaxInt was negative and the minimum
+  disappeared; a minimum no PIN can meet (above 63) now refuses every PIN.
+
 ## cmd/fido v0.7.2
 
 - Security (low): text the KEY supplies reached the terminal raw. A fingerprint
