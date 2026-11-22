@@ -155,13 +155,21 @@ subcommands 0x03 and 0x04 (CTAP 2.1 6.5.5.5 and 6.5.5.6); give them
 `Info.MinPINLength` so a PIN the key would refuse costs no exchange.
 `Info.ForcePINChange` says the PIN must be changed before it is used again.
 
+A PIN you hold as a `[]byte` goes through `Key.PINTokenBytes`, `Key.SetPINBytes`
+and `Key.ChangePINBytes` (and `CheckNewPINBytes`): the PIN is hashed in place,
+no `string` is made of it, nothing is kept, and the copies made on the way (the
+digest, the padded block) are wiped, so `defer clear(pin)` in the caller leaves
+no copy behind. The `string` forms (`PINToken`, `SetPIN`, `ChangePIN`) are
+deprecated: a `string` cannot be wiped. The requests are identical, in the same
+order.
+
 `Key.Bio(info)` drives authenticatorBioEnrollment (6.7) on a key that declares
 `bioEnroll` (command 0x09, token with `PermBioEnrollment`) or the prototype
 `userVerificationMgmtPreview` (command 0x40, a plain getPinToken token):
 
 ```go
 b, _ := k.Bio(info)
-tok, _ := k.PINToken(ctx, pin, proto, b.Permissions(), "")
+tok, _ := k.PINTokenBytes(ctx, pin, proto, b.Permissions(), "") // pin is a []byte
 id, err := b.Enroll(ctx, tok, 0, func(s fido.EnrollStep) {
 	fmt.Println(s.Status, s.Remaining, "samples left")
 })

@@ -148,7 +148,7 @@ func TestAPINHashIsSixteenBytesOfTheDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enc, err := keys.pinHash("1234")
+	enc, err := keys.pinHash([]byte("1234"))
 	if err != nil {
 		t.Fatalf("pinHash: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestAPINHashIsSixteenBytesOfTheDigest(t *testing.T) {
 	if bytes.Contains(enc, sum[16:]) {
 		t.Error("the second half of the digest appears in the ciphertext")
 	}
-	if _, err := keys.pinHash(""); err == nil {
+	if _, err := keys.pinHash(nil); err == nil {
 		t.Error("an empty PIN was accepted")
 	}
 }
