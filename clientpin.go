@@ -183,11 +183,31 @@ func (t Token) authParam(data []byte) []byte {
 // A wrong PIN COSTS a retry, and an authenticator that runs out locks until it
 // is unplugged, then permanently. [Key.PINRetries] before prompting is not
 // politeness.
+//
+// Deprecated: a string is immutable, so the caller cannot wipe the PIN it
+// holds and a copy stays in memory until the garbage collector reuses it. Use
+// [Key.PINTokenBytes]. This form copies pin into a slice, calls that one and
+// wipes the copy; the caller's string stays.
 func (k *Key) PINToken(ctx context.Context, pin string, proto PINProtocol, perms Permissions, rpID string) (Token, error) {
+	b := []byte(pin)
+	defer wipe(b)
+	return k.PINTokenBytes(ctx, b, proto, perms, rpID)
+}
+
+// PINTokenBytes is [Key.PINToken] for a PIN held as a slice, so that the
+// caller can wipe it. It sends exactly the requests PINToken does, in the same
+// order: the same single token is asked for.
+//
+// pin is only read: its SHA-256 is taken in place, no string is made of it, no
+// copy of it is kept, and the intermediate digest is wiped before the call
+// returns. Wiping pin once the call has returned is the caller's:
+//
+//	defer clear(pin)
+func (k *Key) PINTokenBytes(ctx context.Context, pin []byte, proto PINProtocol, perms Permissions, rpID string) (Token, error) {
 	if err := k.ctap2Ready(); err != nil {
 		return Token{}, err
 	}
-	if pin == "" {
+	if len(pin) == 0 {
 		return Token{}, fmt.Errorf("fido: an empty PIN is not a PIN")
 	}
 	pub, err := k.KeyAgreement(ctx, proto)

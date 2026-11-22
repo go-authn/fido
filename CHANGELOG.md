@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.15.0
+
+- `Key.PINTokenBytes`, `Key.SetPINBytes`, `Key.ChangePINBytes` and
+  `CheckNewPINBytes` take the PIN as a `[]byte`. A `string` is immutable, so a
+  caller that holds its PIN as a slice and wipes it still left one copy in
+  memory until the garbage collector reused it. The slice forms read the PIN in
+  place (its SHA-256 is taken without converting to a `string`), keep nothing of
+  it and wipe every intermediate they made (the digest, the 64-byte padded
+  block); wiping the caller's own slice stays the caller's. They send exactly
+  the requests of the string forms, in the same order: a test asserts equal
+  wire bytes, because a key holds ONE pinUvAuthToken at a time.
+- `Key.PINToken`, `Key.SetPIN` and `Key.ChangePIN` are deprecated and unchanged
+  in behaviour: they copy the PIN into a slice, call the new form and wipe the
+  copy (the caller's string stays, which Go cannot prevent).
+- `NameTokens` still takes the PIN as a string: it keeps it to ask for a fresh
+  token later, so it cannot be a read-only borrow. Not changed here.
+
 ## v0.14.0
 
 Security audit 2026-11-21.

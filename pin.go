@@ -31,26 +31,38 @@ const (
 // not normalise (the standard library has no NFC): a PIN with composed and
 // decomposed spellings must be given in NFC by the caller.
 func CheckNewPIN(pin string, minLen uint) error {
+	return checkNewPIN(utf8.ValidString(pin), utf8.RuneCountInString(pin), len(pin), minLen)
+}
+
+// CheckNewPINBytes is [CheckNewPIN] for a PIN held as a slice. It only reads
+// pin and keeps nothing of it.
+func CheckNewPINBytes(pin []byte, minLen uint) error {
+	return checkNewPIN(utf8.Valid(pin), utf8.RuneCount(pin), len(pin), minLen)
+}
+
+// checkNewPIN is the policy over what was measured of the PIN, so that the
+// string and slice forms cannot drift apart and neither converts to the other.
+func checkNewPIN(valid bool, runes, size int, minLen uint) error {
 	if minLen == 0 {
 		minLen = DefaultMinPINLength
 	}
-	if !utf8.ValidString(pin) {
+	if !valid {
 		return fmt.Errorf("fido: the PIN is not valid UTF-8")
 	}
 	// The key supplies minLen. Compared as unsigned: int(minLen) of a value
 	// above MaxInt is negative and the check would pass everything.
-	if n := utf8.RuneCountInString(pin); uint64(n) < uint64(minLen) {
-		return fmt.Errorf("fido: the PIN has %d characters; this authenticator wants at least %d", n, minLen)
+	if uint64(runes) < uint64(minLen) {
+		return fmt.Errorf("fido: the PIN has %d characters; this authenticator wants at least %d", runes, minLen)
 	}
-	if len(pin) > MaxPINBytes {
-		return fmt.Errorf("fido: the PIN is %d bytes in UTF-8; the most CTAP allows is %d", len(pin), MaxPINBytes)
+	if size > MaxPINBytes {
+		return fmt.Errorf("fido: the PIN is %d bytes in UTF-8; the most CTAP allows is %d", size, MaxPINBytes)
 	}
 	return nil
 }
 
 // paddedPIN is the PIN right-padded with zero bytes to 64 (CTAP 2.1 6.5.5.5).
 // The caller wipes it.
-func paddedPIN(pin string) []byte {
+func paddedPIN[T string | []byte](pin T) []byte {
 	b := make([]byte, pinBlock)
 	copy(b, pin)
 	return b
@@ -63,11 +75,24 @@ func paddedPIN(pin string) []byte {
 //
 // minLen is the authenticator's [Info.MinPINLength]. An authenticator that
 // already has a PIN answers CTAP2_ERR_PIN_AUTH_INVALID: use [Key.ChangePIN].
+//
+// Deprecated: a string cannot be wiped; use [Key.SetPINBytes]. This form
+// copies newPIN into a slice, calls that one and wipes the copy.
 func (k *Key) SetPIN(ctx context.Context, proto PINProtocol, newPIN string, minLen uint) error {
+	b := []byte(newPIN)
+	defer wipe(b)
+	return k.SetPINBytes(ctx, proto, b, minLen)
+}
+
+// SetPINBytes is [Key.SetPIN] for a PIN held as a slice, so that the caller
+// can wipe it. The requests are the same. newPIN is only read: the one copy
+// made (the 64-byte block that is encrypted) is wiped before the call
+// returns, and wiping newPIN itself is the caller's.
+func (k *Key) SetPINBytes(ctx context.Context, proto PINProtocol, newPIN []byte, minLen uint) error {
 	if err := k.ctap2Ready(); err != nil {
 		return err
 	}
-	if err := CheckNewPIN(newPIN, minLen); err != nil {
+	if err := CheckNewPINBytes(newPIN, minLen); err != nil {
 		return err
 	}
 	keys, ownCOSE, err := k.agreeWith(ctx, proto)
@@ -75,7 +100,7 @@ func (k *Key) SetPIN(ctx context.Context, proto PINProtocol, newPIN string, minL
 		return err
 	}
 	padded := paddedPIN(newPIN)
-	defer clear(padded)
+	defer wipe(padded)
 	newPinEnc, err := keys.encrypt(padded)
 	if err != nil {
 		return err
@@ -97,14 +122,28 @@ func (k *Key) SetPIN(ctx context.Context, proto PINProtocol, newPIN string, minL
 // A wrong current PIN costs a retry, as in [Key.PINToken]: read
 // [Key.PINRetries] first. When [Info.ForcePINChange] is set the authenticator
 // refuses a new PIN equal to the current one.
+//
+// Deprecated: a string cannot be wiped; use [Key.ChangePINBytes]. This form
+// copies both PINs into slices, calls that one and wipes the copies.
 func (k *Key) ChangePIN(ctx context.Context, proto PINProtocol, curPIN, newPIN string, minLen uint) error {
+	cur, nw := []byte(curPIN), []byte(newPIN)
+	defer wipe(cur)
+	defer wipe(nw)
+	return k.ChangePINBytes(ctx, proto, cur, nw, minLen)
+}
+
+// ChangePINBytes is [Key.ChangePIN] for PINs held as slices, so that the
+// caller can wipe them. The requests are the same. Both are only read, and
+// the copies made (the digest of curPIN, the padded block of newPIN) are wiped
+// before the call returns; wiping curPIN and newPIN is the caller's.
+func (k *Key) ChangePINBytes(ctx context.Context, proto PINProtocol, curPIN, newPIN []byte, minLen uint) error {
 	if err := k.ctap2Ready(); err != nil {
 		return err
 	}
-	if curPIN == "" {
+	if len(curPIN) == 0 {
 		return fmt.Errorf("fido: an empty PIN is not a PIN")
 	}
-	if err := CheckNewPIN(newPIN, minLen); err != nil {
+	if err := CheckNewPINBytes(newPIN, minLen); err != nil {
 		return err
 	}
 	keys, ownCOSE, err := k.agreeWith(ctx, proto)
@@ -116,7 +155,7 @@ func (k *Key) ChangePIN(ctx context.Context, proto PINProtocol, curPIN, newPIN s
 		return err
 	}
 	padded := paddedPIN(newPIN)
-	defer clear(padded)
+	defer wipe(padded)
 	newPinEnc, err := keys.encrypt(padded)
 	if err != nil {
 		return err

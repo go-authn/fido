@@ -21,7 +21,12 @@ import (
 // -- so the handling below is unreachable in practice and is kept anyway: it is
 // what a future reader with a different source would need, and a test drives it
 // so it is not dead weight nobody has ever run.
+//
+// wipe is a seam for the same reason, the other way round: it is how every
+// copy of a PIN, or of its digest, is erased, and a test replaces it to see
+// that each one was.
 var (
+	wipe       = func(b []byte) { clear(b) }
 	randRead   = rand.Read
 	newECDHKey = func() (*ecdh.PrivateKey, error) { return ecdh.P256().GenerateKey(rand.Reader) }
 	hkdfKey    = func(h func() hash.Hash, secret, salt []byte, info string, n int) ([]byte, error) {
@@ -161,11 +166,16 @@ func (k pinKeys) authenticate(data []byte) []byte {
 //
 // Sixteen and not thirty-two, which is one AES block. The other half of the
 // hash is never sent and never needed.
-func (k pinKeys) pinHash(pin string) ([]byte, error) {
-	if pin == "" {
+//
+// The PIN is read in place: no string and no copy of it is made, and the
+// digest, which is as good as the PIN to anyone who can replay it under a
+// secret, is wiped before the function returns.
+func (k pinKeys) pinHash(pin []byte) ([]byte, error) {
+	if len(pin) == 0 {
 		return nil, fmt.Errorf("fido: an empty PIN is not a PIN")
 	}
-	sum := sha256.Sum256([]byte(pin))
+	sum := sha256.Sum256(pin)
+	defer wipe(sum[:])
 	return k.encrypt(sum[:16])
 }
 
