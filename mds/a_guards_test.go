@@ -26,6 +26,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -239,8 +240,8 @@ func TestEachStoreFailureIsReturned(t *testing.T) {
 		}
 	})
 	try(t, "the directory is not writable", func() {
-		if os.Geteuid() == 0 {
-			t.Skip("root writes anywhere")
+		if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+			t.Skip("root writes anywhere, and Windows ignores the mode bits of a directory")
 		}
 		dir := filepath.Join(t.TempDir(), "ro")
 		if err := os.Mkdir(dir, 0o500); err != nil {
@@ -398,5 +399,5 @@ func TestHTTPGet(t *testing.T) {
 	dead := plain.URL
 	plain.Close()
 	_, err = get("a closed server", dead+"/ok", 10, false)
-	wantErr(t, "a closed server", err, nil, "connection refused")
+	wantErr(t, "a closed server", err, nil, "refused")
 }

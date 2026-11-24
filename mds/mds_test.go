@@ -22,6 +22,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -514,6 +515,9 @@ func TestTheCacheIsUsedUntilNextUpdate(t *testing.T) {
 	c.Options.Now = func() time.Time { return time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC) }
 	if _, err := c.Load(ctx, false); err == nil || s.hits != 3 {
 		t.Fatalf("expired cache served: %v hits %d", err, s.hits)
+	}
+	if runtime.GOOS == "windows" {
+		return // Windows has no POSIX mode bits to assert
 	}
 	if fi, err := os.Stat(c.Dir); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("dir %v %v", fi, err)
