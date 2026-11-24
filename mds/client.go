@@ -91,12 +91,11 @@ func (c *Client) readCached(o Options) *Blob {
 	return b
 }
 
-// readBounded reads at most max+1 bytes of a file, none if it cannot be opened.
+// readBounded reads at most max+1 bytes of a file, none if it cannot be opened
+// (a nil *os.File answers every call with ErrInvalid, so there is nothing to
+// read from it and nothing to guard).
 func readBounded(path string, max int64) []byte {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
+	f, _ := os.Open(path)
 	defer f.Close()
 	raw, _ := io.ReadAll(io.LimitReader(f, max+1))
 	return raw

@@ -178,14 +178,16 @@ func TestMalformedAAGUIDsMatchNothing(t *testing.T) {
 		})
 	}
 	b := &Blob{Entries: []Entry{{AAGUID: ""}, {AAGUID: "zz"}, {AAGUID: "ee882879-721c-4913-9775-3dfcce97072a"}}}
-	for _, s := range []string{"", "zz", "ee88"} {
-		if e := b.Lookup(s); e != nil {
-			t.Errorf("Lookup(%q) = %+v", s, e)
+	try(t, "lookup", func() {
+		for _, s := range []string{"", "zz", "ee88"} {
+			if e := b.Lookup(s); e != nil {
+				t.Errorf("Lookup(%q) = %+v", s, e)
+			}
 		}
-	}
-	if e := b.Lookup("EE882879721C491397753DFCCE97072A"); e == nil || e.AAGUID != b.Entries[2].AAGUID {
-		t.Errorf("Lookup of the third: %+v", e)
-	}
+		if e := b.Lookup("EE882879721C491397753DFCCE97072A"); e == nil || e.AAGUID != b.Entries[2].AAGUID {
+			t.Errorf("Lookup of the third: %+v", e)
+		}
+	})
 }
 
 type failFile struct {
