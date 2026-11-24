@@ -26,7 +26,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -240,14 +239,13 @@ func TestEachStoreFailureIsReturned(t *testing.T) {
 		}
 	})
 	try(t, "the directory is not writable", func() {
-		if os.Geteuid() == 0 || runtime.GOOS == "windows" {
-			t.Skip("root writes anywhere, and Windows ignores the mode bits of a directory")
-		}
-		dir := filepath.Join(t.TempDir(), "ro")
-		if err := os.Mkdir(dir, 0o500); err != nil {
-			t.Fatal(err)
-		}
-		if err := (&Client{Dir: dir}).store("x", nil); err == nil || pathOp(err) != "open" {
+		// The failure is injected: a read-only directory does not exist on
+		// Windows and is no obstacle to root, whereas the injection is the same
+		// error everywhere.
+		c := &Client{Dir: t.TempDir(), createTemp: func(dir, pattern string) (tempFile, error) {
+			return nil, &os.PathError{Op: "open", Path: dir, Err: os.ErrPermission}
+		}}
+		if err := c.store("x", nil); err == nil || pathOp(err) != "open" {
 			t.Errorf("%v", err)
 		}
 	})
