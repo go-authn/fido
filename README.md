@@ -202,6 +202,49 @@ pinUvAuthParam). CTAP 2.1 does not make every key answer that, so a refused read
 is `ErrNameRefused` and a caller needs a fallback. `SetName` replaces: the old
 name is deleted first (credential management, 6.8), so a key never holds two.
 
+## What a key is: the FIDO Metadata Service (package `mds`)
+
+`getInfo` reports an AAGUID, but the key says it itself: only a verified
+attestation proves it. `github.com/go-authn/fido/mds` turns an AAGUID into what
+the FIDO Alliance publishes about that model (MDS3, spec v3.0 PS 2021-05-18):
+description, authenticator version, attestation types, key protection, user
+verification methods, the certification history (`statusReports`) and the
+`attestationRootCertificates` a relying party should chain an attestation to.
+
+The blob is never used unverified, and there is no option that turns that off:
+`mds.Verify` accepts it only if the JWS is RS256 or ES256 with an `x5c` chain
+that verifies, at the time asked for, against the pinned GlobalSign Root R46
+(the root the FIDO Alliance names; SHA-256 `4fa3126d...40c9`, checked on every
+use); the leaf is valid for `mds.fidoalliance.org` (it is a TLS certificate, so
+without that any GlobalSign EV site could sign a blob); no certificate of the
+chain is revoked (each CRL is fetched, its signature and window checked; a
+certificate without a reachable valid CRL is a refusal, the check fails closed);
+and `nextUpdate` has not passed. The download is bounded (64 MiB; the blob is
+about 11 MB). `mds.Client` keeps the blob in a directory for as long as
+`nextUpdate` allows, verifies it again on every load, and refuses a download
+whose serial `no` is lower than the cached one. The parser is fuzzed, and so is
+the claim that no input verifies against the pinned root.
+
+```go
+c := &mds.Client{Dir: cacheDir}
+blob, err := c.Load(ctx, false)
+e := blob.Lookup(hex.EncodeToString(info.AAGUID[:]))   // nil: not in the list
+roots, err := e.RootCertificates()
+```
+
+## YubiKey device information (`ykman info`, read-only)
+
+`Key.YubiKeyInfo` reads what `ykman info` shows over the HID transport the
+library already has, with Yubico's vendor CTAPHID command 0x42 (read config,
+paged): serial, firmware, form factor, the applications supported and ENABLED
+over USB and NFC (OTP, U2F, FIDO2, OATH, PIV, OpenPGP, HSMAUTH), the FIPS and
+Security Key flags, config lock, part number. It is a port of yubikit 5.8.0
+`management.py` and the TLV reader of `core/__init__.py`. Only the read is
+implemented: the write command (0x43) is not, so nothing here can change a key's
+configuration. The command is Yubico's, so call it on a key whose USB vendor id
+is 0x1050; firmware older than 4.1.0 is refused. `ParseYubiKeyPages` is the
+parser alone, fuzzed.
+
 ## The fido command
 
 `cmd/fido` (its own module: `go install github.com/go-authn/fido/cmd/fido@latest`)

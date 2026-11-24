@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("eyJhbGciOiJub25lIiwieDVjIjpbIkFBQUEiXX0.e30.")
