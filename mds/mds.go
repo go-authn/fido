@@ -107,10 +107,9 @@ func Root() *x509.Certificate {
 	if hex.EncodeToString(sum[:]) != RootSHA256 {
 		panic("mds: embedded root is not GlobalSign Root R46")
 	}
-	c, err := x509.ParseCertificate(rootR46DER)
-	if err != nil {
-		panic("mds: embedded root: " + err.Error())
-	}
+	// The hash above names exactly one DER, which parses (a test asserts it),
+	// so there is no error to handle.
+	c, _ := x509.ParseCertificate(rootR46DER)
 	return c
 }
 
