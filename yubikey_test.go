@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -90,6 +91,36 @@ func TestATruncatedTLVIsRefusedByTheParserItself(t *testing.T) {
 				t.Errorf("%s: end %d, %v (want ...%q...)", c.name, end, err, c.want)
 			}
 		}()
+	}
+}
+
+// Like the test above, first for the same reason: a guard that is gone turns
+// these inputs into a crash, and the recover turns the crash into a failure.
+func TestShortFieldsAndPagesAreRefusedWithoutACrash(t *testing.T) {
+	try := func(name string, f func() error, want string) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("%s: panicked: %v", name, r)
+			}
+		}()
+		if err := f(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v (want ...%q...)", name, err, want)
+		}
+	}
+	for _, b := range [][]byte{nil, {1}, {1, 2}, {1, 2, 3, 4}} {
+		try(fmt.Sprintf("version of %d bytes", len(b)), func() error {
+			f := &fields{}
+			if v := f.version(b); v != (YubiKeyVersion{}) {
+				t.Errorf("version of %d bytes read as %v", len(b), v)
+			}
+			return f.err
+		}, fmt.Sprintf("a version of %d bytes", len(b)))
+	}
+	for _, p := range [][]byte{nil, {}, {0, 1}, {5, 1}, {1}} {
+		try(fmt.Sprintf("page %v", p), func() error {
+			_, err := (&pageJoiner{}).add(p)
+			return err
+		}, "length byte")
 	}
 }
 
