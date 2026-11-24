@@ -58,6 +58,41 @@ func bioPage() []byte {
 	)
 }
 
+// tlvParse is called with data cut short and must answer with an error, never
+// a crash and never an end past the data. A crash is reported as a failure
+// here, so a guard that is gone fails by an assertion before anything slices.
+// It stays the FIRST test of the file: a mutant that crashes a later test
+// would end the binary before this one ran.
+func TestATruncatedTLVIsRefusedByTheParserItself(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"value cut short", []byte{0x01, 0x05, 1}, "runs past"},
+		{"a 3-byte length past the data", []byte{0x01, 0x83, 0x01, 0x00, 0x00, 7}, "runs past"},
+		{"no length", []byte{0x01}, "runs past"},
+		{"empty", []byte{}, "runs past"},
+		{"a long tag cut short", []byte{0x1F}, "runs past"},
+		{"a long tag whose last byte is missing", []byte{0x1F, 0x80}, "runs past"},
+		{"an unfinished indefinite length", []byte{0x30, 0x80, 0x01, 0x00}, "runs past"},
+		{"a failing element inside an indefinite one", []byte{0x30, 0x80, 0x01, 0x84, 0, 0, 0, 1, 7}, "4 bytes"},
+	}
+	for _, c := range cases {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s: panicked: %v", c.name, r)
+				}
+			}()
+			_, _, _, end, err := tlvParse(c.data, 0, 0)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s: end %d, %v (want ...%q...)", c.name, end, err, c.want)
+			}
+		}()
+	}
+}
+
 func TestAYubiKeyBioIsRead(t *testing.T) {
 	in, err := ParseYubiKeyInfo(bioPage(), YubiKeyVersion{5, 8, 0})
 	if err != nil {
@@ -268,39 +303,6 @@ func TestMalformedDeviceInfoIsRefused(t *testing.T) {
 	}
 }
 
-// tlvParse is called with data cut short and must answer with an error, never
-// a crash and never an end past the data. A crash is reported as a failure
-// here, so a guard that is gone fails by an assertion before anything slices.
-func TestATruncatedTLVIsRefusedByTheParserItself(t *testing.T) {
-	cases := []struct {
-		name string
-		data []byte
-		want string
-	}{
-		{"value cut short", []byte{0x01, 0x05, 1}, "runs past"},
-		{"a 3-byte length past the data", []byte{0x01, 0x83, 0x01, 0x00, 0x00, 7}, "runs past"},
-		{"no length", []byte{0x01}, "runs past"},
-		{"empty", []byte{}, "runs past"},
-		{"a long tag cut short", []byte{0x1F}, "runs past"},
-		{"a long tag whose last byte is missing", []byte{0x1F, 0x80}, "runs past"},
-		{"an unfinished indefinite length", []byte{0x30, 0x80, 0x01, 0x00}, "runs past"},
-		{"a failing element inside an indefinite one", []byte{0x30, 0x80, 0x01, 0x84, 0, 0, 0, 1, 7}, "4 bytes"},
-	}
-	for _, c := range cases {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("%s: panicked: %v", c.name, r)
-				}
-			}()
-			_, _, _, end, err := tlvParse(c.data, 0, 0)
-			if err == nil || !strings.Contains(err.Error(), c.want) {
-				t.Errorf("%s: end %d, %v (want ...%q...)", c.name, end, err, c.want)
-			}
-		}()
-	}
-}
-
 func TestATLVThatIsNotATLVIsRefused(t *testing.T) {
 	// nest(n) is n indefinite-length elements inside one another, finished.
 	nest := func(n int) []byte {
@@ -370,7 +372,9 @@ func TestTLVForms(t *testing.T) {
 		t.Fatalf("%v %v", d, err)
 	}
 	// Nesting without end is bounded rather than followed forever.
-	deep := bytes.Repeat([]byte{0x30, 0x80}, 100)
+	// (Just past the bound: with the refusal gone the work grows with the
+	// data to the power of the bound, so a longer input would hang, not fail.)
+	deep := bytes.Repeat([]byte{0x30, 0x80}, maxTLVDepth+2)
 	if _, err = tlvDict(deep); !errors.Is(err, ErrYubiKeyData) {
 		t.Fatal(err)
 	}
