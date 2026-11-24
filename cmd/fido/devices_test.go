@@ -128,17 +128,17 @@ func TestDevicesAreListedPerPlatformInAStableOrder(t *testing.T) {
 	opened := ""
 	k := newAnswerKey("K", map[string]bool{})
 	listMac = func() ([]macfido.Device, error) {
-		return []macfido.Device{{Path: "iokit:2", Name: "B", Serial: "7"}, {Path: "iokit:1", Name: "A"}}, nil
+		return []macfido.Device{{Path: "iokit:2", Name: "B", Serial: "7", VendorID: 0x1050}, {Path: "iokit:1", Name: "A"}}, nil
 	}
 	openMacDevice = func(d macfido.Device) (authn.Transport, error) { opened = d.Path; return k, nil }
 	listLinux = func() ([]linuxfido.Device, error) {
-		return []linuxfido.Device{{Path: "/dev/hidraw1", Phys: "usb-0000:00:14.0-3/input0", Name: "Y"}, {Path: "/dev/hidraw0", Name: "X"}}, nil
+		return []linuxfido.Device{{Path: "/dev/hidraw1", Phys: "usb-0000:00:14.0-3/input0", Name: "Y", VendorID: 0x1050}, {Path: "/dev/hidraw0", Name: "X"}}, nil
 	}
 	openLinuxDevice = func(d linuxfido.Device) (authn.Transport, error) { opened = d.Path; return k, nil }
 
 	goos = "darwin"
 	ds, err := listDevices()
-	if err != nil || len(ds) != 2 || ds[0].ID != "iokit:1" || ds[1].ID != "iokit:2" || ds[1].Serial != "7" || ds[1].Name != "B" {
+	if err != nil || len(ds) != 2 || ds[0].ID != "iokit:1" || ds[1].ID != "iokit:2" || ds[1].Serial != "7" || ds[1].Name != "B" || ds[1].Vendor != 0x1050 || ds[0].Vendor != 0 {
 		t.Fatalf("%+v %v", ds, err)
 	}
 	key, err := ds[1].open(context.Background())
@@ -150,7 +150,7 @@ func TestDevicesAreListedPerPlatformInAStableOrder(t *testing.T) {
 	goos = "linux"
 	ds, err = listDevices()
 	// The port when there is one, the node otherwise.
-	if err != nil || len(ds) != 2 || ds[0].ID != "/dev/hidraw0" || ds[1].ID != "usb-0000:00:14.0-3/input0" {
+	if err != nil || len(ds) != 2 || ds[0].ID != "/dev/hidraw0" || ds[1].ID != "usb-0000:00:14.0-3/input0" || ds[1].Vendor != 0x1050 || ds[0].Vendor != 0 {
 		t.Fatalf("%+v %v", ds, err)
 	}
 	if key, err = ds[1].open(context.Background()); err != nil || opened != "/dev/hidraw1" {

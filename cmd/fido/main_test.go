@@ -48,13 +48,16 @@ type fake struct {
 	readNameErr, setNameErr, removeNameErr, nameTokensErr error
 
 	// injected errors
+	ykInfo                                                          authn.YubiKeyInfo
+	ykErr                                                           error
 	infoErr, retriesErr, uvErr, setErr, changeErr, tokenErr, bioErr error
 	sensorErr, enrollErr, listErr, renameErr, removeErr             error
 }
 
-func (f *fake) GetInfo(context.Context) (authn.Info, error)       { return f.info, f.infoErr }
-func (f *fake) PINRetries(context.Context) (authn.Retries, error) { return f.retries, f.retriesErr }
-func (f *fake) UVRetries(context.Context) (int, error)            { return f.uvRetries, f.uvErr }
+func (f *fake) GetInfo(context.Context) (authn.Info, error)            { return f.info, f.infoErr }
+func (f *fake) YubiKeyInfo(context.Context) (authn.YubiKeyInfo, error) { return f.ykInfo, f.ykErr }
+func (f *fake) PINRetries(context.Context) (authn.Retries, error)      { return f.retries, f.retriesErr }
+func (f *fake) UVRetries(context.Context) (int, error)                 { return f.uvRetries, f.uvErr }
 func (f *fake) SetPINBytes(_ context.Context, p authn.PINProtocol, n []byte, _ uint) error {
 	f.proto, f.setPIN = p, string(n)
 	f.held = append(f.held, n)

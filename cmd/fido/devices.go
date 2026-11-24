@@ -24,7 +24,9 @@ type device struct {
 	Label string
 	// Name is the product string and Serial the serial when the key has one.
 	Name, Serial string
-	open         func(context.Context) (*authn.Key, error)
+	// Vendor is the USB vendor id the operating system reports.
+	Vendor uint16
+	open   func(context.Context) (*authn.Key, error)
 }
 
 // The platform lists and openers, replaced by tests.
@@ -50,7 +52,7 @@ var listDevices = func() ([]device, error) {
 		}
 		for _, d := range ds {
 			out = append(out, device{
-				ID: d.Path, Label: d.String(), Name: d.Name, Serial: d.Serial,
+				ID: d.Path, Label: d.String(), Name: d.Name, Serial: d.Serial, Vendor: d.VendorID,
 				open: func(ctx context.Context) (*authn.Key, error) {
 					t, err := openMacDevice(d)
 					if err != nil {
@@ -73,7 +75,7 @@ var listDevices = func() ([]device, error) {
 				id = d.Path
 			}
 			out = append(out, device{
-				ID: id, Label: d.String(), Name: d.Name, Serial: d.Serial,
+				ID: id, Label: d.String(), Name: d.Name, Serial: d.Serial, Vendor: d.VendorID,
 				open: func(ctx context.Context) (*authn.Key, error) {
 					t, err := openLinuxDevice(d)
 					if err != nil {

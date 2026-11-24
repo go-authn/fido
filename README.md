@@ -257,7 +257,27 @@ fido info                                 # one key in detail
 fido pin set | change
 fido fingerprint add [--name N] | list | rename ID NAME | remove ID
 fido name set NAME | show | remove          # a name stored ON the key
+fido identify [--refresh]                   # the key's model from the FIDO MDS (read-only)
+fido mds lookup AAGUID | search WORD [--refresh]   # the verified FIDO MDS3 blob, no key needed
+fido yubikey info                           # like `ykman info` (read-only), with a PIV/CCID verdict
 ```
+
+`fido mds lookup AAGUID` prints the model, its certification history and the
+`attestationRootCertificates` (subject and SHA-256) from the FIDO Metadata
+Service; `fido mds search WORD` lists the models whose name or AAGUID contains
+WORD. The blob (about 11 MB) is cached in the user cache directory, and is
+verified on every use against the pinned GlobalSign Root R46: there is no flag
+that skips the verification. `fido identify` reads the AAGUID the key reports in
+`getInfo` and looks it up; it says each time that this AAGUID is the key's own
+claim, and that only a verified attestation proves the model.
+
+`fido yubikey info` reads Yubico's device info (firmware, serial, form factor,
+the applications supported and enabled over USB and NFC, FIPS/Security Key
+series, lock) and ends with two plain lines, `PIV:` and `CCID:`, saying whether
+the smart-card interface and PIV are present, disabled or enabled. It writes
+nothing, and refuses a key whose USB vendor id is not Yubico's (0x1050) before
+sending it anything. A YubiKey Bio, for example, reports FIDO U2F and FIDO2
+only: no PIV, no CCID.
 
 `fido name set NAME` stores a name in the key itself (a credential under
 `name.fido`; asks for the PIN, and replaces any earlier name so a key never
