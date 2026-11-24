@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.16.0
+
+- New package `mds`: the FIDO Metadata Service (MDS3) blob, verified, with
+  `Blob.Lookup`, `Blob.Search` and `Entry.RootCertificates`
+  (`attestationRootCertificates`, for an attestation verifier). `Verify` checks
+  the x5c chain to the pinned GlobalSign Root R46, the leaf's host name
+  (`mds.fidoalliance.org`), the RS256/ES256 signature, the CRL of every
+  non-root certificate (fail closed) and `nextUpdate`; there is no way to skip
+  any of it. `Client` caches by `nextUpdate`, re-verifies on load, bounds the
+  download at 64 MiB and refuses a lower `no`. Fuzzed with a committed corpus.
+- `Key.YubiKeyInfo`, `ParseYubiKeyPages`, `ParseYubiKeyInfo`: YubiKey device
+  information over CTAPHID (vendor command 0x42, read only), a port of yubikit
+  5.8.0. Fuzzed with a committed corpus.
+
 ## cmd/fido v0.7.3
 
 - Security (low): `pin set`, `pin change` and every `fingerprint` command (the
