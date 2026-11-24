@@ -1,5 +1,17 @@
 # Changelog
 
+## cmd/fido v0.8.0
+
+- New `fido mds lookup AAGUID` and `fido mds search WORD`: the FIDO Metadata
+  Service (MDS3) from go-authn/fido v0.16.0, with the entry's attestation root
+  certificates. The blob is verified on every use (pinned GlobalSign Root R46,
+  host name, CRLs, `nextUpdate`); no flag turns that off.
+- New `fido identify`: names the attached key's model from its getInfo AAGUID,
+  and says that this AAGUID is self-declared (only a verified attestation
+  proves it).
+- New `fido yubikey info`: `ykman info`, read-only, with explicit `PIV:` and
+  `CCID:` lines. Refused unless the USB vendor id is 0x1050.
+
 ## v0.16.0
 
 - New package `mds`: the FIDO Metadata Service (MDS3) blob, verified, with
