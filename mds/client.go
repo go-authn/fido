@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -30,6 +31,8 @@ type Client struct {
 	Options Options
 	// Fetch replaces the HTTP download of the blob (tests).
 	Fetch func(url string) ([]byte, error)
+
+	createTemp func(dir, pattern string) (tempFile, error) // tests
 }
 
 const blobFile = "mds3.jwt"
@@ -80,22 +83,41 @@ func (c *Client) Load(ctx context.Context, refresh bool) (*Blob, error) {
 
 // readCached returns the cached blob if it verifies now, else nil.
 func (c *Client) readCached(o Options) *Blob {
-	raw, err := os.ReadFile(filepath.Join(c.Dir, blobFile))
-	if err != nil || len(raw) > MaxBlobBytes {
-		return nil
-	}
-	b, err := Verify(raw, o)
+	// A file that cannot be read gives no bytes, which Verify refuses; so does
+	// one over the bound, of which at most one byte more than the bound is
+	// read. Verify returns no blob with an error, so b is nil on every failure.
+	raw := readBounded(filepath.Join(c.Dir, blobFile), MaxBlobBytes)
+	b, _ := Verify(raw, o)
+	return b
+}
+
+// readBounded reads at most max+1 bytes of a file, none if it cannot be opened.
+func readBounded(path string, max int64) []byte {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
-	return b
+	defer f.Close()
+	raw, _ := io.ReadAll(io.LimitReader(f, max+1))
+	return raw
+}
+
+// tempFile is what store needs of the file it writes first (tests replace it).
+type tempFile interface {
+	io.Writer
+	io.Closer
+	Name() string
 }
 
 func (c *Client) store(name string, data []byte) error {
 	if err := os.MkdirAll(c.Dir, 0o700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(c.Dir, name+".tmp*")
+	create := c.createTemp
+	if create == nil {
+		create = func(dir, pattern string) (tempFile, error) { return os.CreateTemp(dir, pattern) }
+	}
+	f, err := create(c.Dir, name+".tmp*")
 	if err != nil {
 		return err
 	}

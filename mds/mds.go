@@ -239,10 +239,9 @@ func NormalizeAAGUID(s string) (string, bool) {
 
 // Lookup finds an entry by AAGUID (any dash form, any case), or nil.
 func (b *Blob) Lookup(aaguid string) *Entry {
-	want, ok := NormalizeAAGUID(aaguid)
-	if !ok {
-		return nil
-	}
+	// A malformed aaguid gives "": no entry's normalised form is empty, for
+	// the entries whose own is malformed are skipped by ok.
+	want, _ := NormalizeAAGUID(aaguid)
 	for i := range b.Entries {
 		if got, ok := NormalizeAAGUID(b.Entries[i].AAGUID); ok && got == want {
 			return &b.Entries[i]

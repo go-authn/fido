@@ -22,6 +22,9 @@ func (o Options) crl() func(string) ([]byte, error) {
 	return func(u string) ([]byte, error) { return httpGet(u, MaxCRLBytes, false) }
 }
 
+// transport is the HTTP round tripper; nil is the default one (tests set it).
+var transport http.RoundTripper
+
 // httpGet downloads u, reading at most max bytes and refusing more. With
 // secure, only https is fetched and a redirect may not leave it; without,
 // http is allowed too: CRLs are signed and the CAs serve them over http
@@ -33,7 +36,8 @@ func httpGet(u string, max int64, secure bool) ([]byte, error) {
 		return nil, fmt.Errorf("mds: refusing to fetch %q", u)
 	}
 	c := &http.Client{
-		Timeout: 3 * time.Minute,
+		Transport: transport,
+		Timeout:   3 * time.Minute,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("mds: too many redirects")
@@ -111,9 +115,8 @@ func crlRevokes(der []byte, cert, issuer *x509.Certificate, now time.Time) (bool
 	if err = l.CheckSignatureFrom(issuer); err != nil {
 		return false, fmt.Errorf("CRL signature: %w", err)
 	}
-	if l.NextUpdate.IsZero() {
-		return false, errors.New("CRL has no nextUpdate")
-	}
+	// A CRL without nextUpdate (zero) is not current either: now is never
+	// before the zero time.
 	if now.Before(l.ThisUpdate) || !now.Before(l.NextUpdate) {
 		return false, fmt.Errorf("CRL not current (%s to %s)", l.ThisUpdate.Format(time.DateOnly), l.NextUpdate.Format(time.DateOnly))
 	}
