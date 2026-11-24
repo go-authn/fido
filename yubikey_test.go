@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -213,26 +214,103 @@ func TestDeviceInfoNamesTheBitsItDoesNotKnow(t *testing.T) {
 
 func TestMalformedDeviceInfoIsRefused(t *testing.T) {
 	good := bioPage()
-	cases := map[string][]byte{
-		"empty":                 {},
-		"length byte wrong":     append([]byte{byte(len(good))}, good...),
-		"truncated element":     {3, ykTagSerial, 4, 1},
-		"no length":             {1, ykTagSerial},
-		"value runs past":       {2, ykTagSerial, 5},
-		"version of 2 bytes":    page(tlv(ykTagUSBSupported, 2), tlv(ykTagVersion, 5, 8)),
-		"9-byte integer":        page(tlv(ykTagUSBSupported, 2), tlv(ykTagSerial, 1, 2, 3, 4, 5, 6, 7, 8, 9)),
-		"serial over 32 bits":   page(tlv(ykTagUSBSupported, 2), tlv(ykTagSerial, 1, 0, 0, 0, 0)),
-		"caps over 32 bits":     page(tlv(ykTagUSBSupported, 1, 0, 0, 0, 0)),
-		"NFC without enabled":   page(tlv(ykTagUSBSupported, 2), tlv(ykTagNFCSupported, 2)),
-		"qualifier lacks type":  page(tlv(ykTagUSBSupported, 2), tlv(ykTagVersionQual, tlv(1, 5, 8, 0)...)),
-		"unknown release type":  page(tlv(ykTagUSBSupported, 2), tlv(ykTagVersionQual, slices.Concat(tlv(1, 5, 8, 0), tlv(2, 3), tlv(3, 0))...)),
-		"fps version 4 bytes":   page(tlv(ykTagUSBSupported, 2), tlv(ykTagFPSVersion, 1, 2, 3, 4)),
-		"indefinite unfinished": {4, 0x30, 0x80, 0x01, 0x00},
+	nine := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	usb := tlv(ykTagUSBSupported, 2)
+	qual := func(elems ...[]byte) []byte { return page(usb, tlv(ykTagVersionQual, slices.Concat(elems...)...)) }
+	// Ordered: a refusal that a mutant would turn into a crash comes after
+	// the ones that it would turn into a wrong answer, so a failing run
+	// prints an assertion before it dies.
+	cases := []struct {
+		name string
+		page []byte
+		want string // a piece of the error, which says WHICH guard refused
+	}{
+		{"length byte too big", append([]byte{byte(len(good) + 5)}, good[1:]...), "length byte"},
+		{"length byte too small", []byte{0, ykTagSerial, 1, 1}, "length byte"},
+		{"value runs past", []byte{2, ykTagSerial, 5}, "runs past"},
+		{"truncated element", []byte{3, ykTagSerial, 4, 1}, "runs past"},
+		{"no length", []byte{1, ykTagSerial}, "runs past"},
+		{"a 4-byte version", page(usb, tlv(ykTagVersion, 5, 8, 0, 1)), "a version of 4 bytes"},
+		{"a 2-byte version", page(usb, tlv(ykTagVersion, 5, 8)), "a version of 2 bytes"},
+		{"9-byte serial", page(usb, tlv(ykTagSerial, nine...)), "9-byte integer"},
+		{"9-byte auto-eject", page(usb, tlv(ykTagAutoEject, nine...)), "9-byte integer"},
+		{"9-byte timeout", page(usb, tlv(ykTagChalRespTimeout, nine...)), "9-byte integer"},
+		{"9-byte flags", page(usb, tlv(ykTagDeviceFlags, nine...)), "9-byte integer"},
+		{"9-byte form factor", page(usb, tlv(ykTagFormFactor, nine...)), "9-byte integer"},
+		{"9-byte FIPS capable", page(usb, tlv(ykTagFIPSCapable, nine...)), "9-byte integer"},
+		{"9-byte FIPS approved", page(usb, tlv(ykTagFIPSApproved, nine...)), "9-byte integer"},
+		{"serial over 32 bits", page(usb, tlv(ykTagSerial, 1, 0, 0, 0, 0)), "serial"},
+		{"USB supported over 32 bits", page(tlv(ykTagUSBSupported, 1, 0, 0, 0, 0)), "wider than 32 bits"},
+		{"USB enabled over 32 bits", page(usb, tlv(ykTagUSBEnabled, 1, 0, 0, 0, 0)), "wider than 32 bits"},
+		{"NFC supported over 32 bits", page(usb, tlv(ykTagNFCSupported, 1, 0, 0, 0, 0), tlv(ykTagNFCEnabled, 0)), "wider than 32 bits"},
+		{"NFC enabled over 32 bits", page(usb, tlv(ykTagNFCSupported, 0), tlv(ykTagNFCEnabled, 1, 0, 0, 0, 0)), "wider than 32 bits"},
+		{"reset blocked over 32 bits", page(usb, tlv(ykTagResetBlocked, 1, 0, 0, 0, 0)), "wider than 32 bits"},
+		{"no supported-USB field", page(tlv(ykTagVersion, 5, 8, 0)), "no supported-USB"},
+		{"NFC without enabled", page(usb, tlv(ykTagNFCSupported, 2)), "NFC-enabled"},
+		{"qualifier lacks type", qual(tlv(1, 5, 8, 0)), "lacks field"},
+		{"qualifier lacks version", qual(tlv(2, 0), tlv(3, 0)), "lacks field"},
+		{"qualifier lacks iteration", qual(tlv(1, 5, 8, 0), tlv(2, 0)), "lacks field"},
+		{"qualifier unknown release type", qual(tlv(1, 5, 8, 0), tlv(2, 3), tlv(3, 0)), "release type"},
+		{"qualifier 9-byte iteration", qual(tlv(1, 5, 8, 0), tlv(2, 0), tlv(3, nine...)), "9-byte integer"},
+		{"qualifier 9-byte release type", qual(tlv(1, 5, 8, 0), tlv(2, nine...), tlv(3, 0)), "9-byte integer"},
+		{"qualifier 2-byte version", qual(tlv(1, 5, 8), tlv(2, 0), tlv(3, 0)), "a version of 2 bytes"},
+		{"qualifier is not TLV", page(usb, tlv(ykTagVersionQual, 1, 9)), "runs past"},
+		{"FPS version of 4 bytes", page(usb, tlv(ykTagFPSVersion, 1, 2, 3, 4)), "a version of 4 bytes"},
+		{"STM version of 2 bytes", page(usb, tlv(ykTagSTMVersion, 1, 2)), "a version of 2 bytes"},
+		{"indefinite length unfinished", []byte{4, 0x30, 0x80, 0x01, 0x00}, "runs past"},
+		{"empty", []byte{}, "length byte"},
 	}
-	for name, p := range cases {
-		if _, err := ParseYubiKeyInfo(p, YubiKeyVersion{5, 8, 0}); !errors.Is(err, ErrYubiKeyData) {
-			t.Errorf("%s: %v", name, err)
+	for _, c := range cases {
+		_, err := ParseYubiKeyInfo(c.page, YubiKeyVersion{5, 8, 0})
+		if !errors.Is(err, ErrYubiKeyData) || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v (want ...%q...)", c.name, err, c.want)
 		}
+	}
+}
+
+func TestATLVThatIsNotATLVIsRefused(t *testing.T) {
+	// nest(n) is n indefinite-length elements inside one another, finished.
+	nest := func(n int) []byte {
+		d := []byte{}
+		for i := 0; i < n; i++ {
+			d = slices.Concat([]byte{0x30, 0x80}, d, []byte{0, 0})
+		}
+		return d
+	}
+	if _, err := tlvDict(nest(maxTLVDepth + 1)); err != nil {
+		t.Fatalf("the deepest allowed nesting: %v", err)
+	}
+	if _, err := tlvDict(nest(maxTLVDepth + 2)); err == nil || !strings.Contains(err.Error(), "nested") {
+		t.Fatalf("one level too deep: %v", err)
+	}
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"a tag of 10 bytes", slices.Concat([]byte{0x1F}, bytes.Repeat([]byte{0xFF}, 9), []byte{0x00, 0x00}), "wider than 8"},
+		{"a tag of 9 bytes, well finished", slices.Concat([]byte{0x1F}, bytes.Repeat([]byte{0xFF}, 7), []byte{0x7F, 0x01, 0x05}), "wider than 8"},
+		{"a 4-byte length", []byte{0x01, 0x84, 0, 0, 0, 1, 7}, "4 bytes"},
+		{"a 3-byte length past the data", []byte{0x01, 0x83, 0x01, 0x00, 0x00, 7}, "runs past"},
+		{"a 2-byte length past the data", []byte{0x01, 0x82, 0x00}, "runs past"},
+		{"a long tag cut short", []byte{0x1F}, "runs past"},
+		{"a long tag whose last byte is missing", []byte{0x1F, 0x80}, "runs past"},
+		{"an empty element list is no element", []byte{0x01}, "runs past"},
+	}
+	for _, c := range cases {
+		if _, err := tlvDict(c.data); !errors.Is(err, ErrYubiKeyData) || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v (want ...%q...)", c.name, err, c.want)
+		}
+	}
+	// 8 continuation bytes after the first is the widest tag that fits.
+	d, err := tlvDict(slices.Concat([]byte{0x1F}, bytes.Repeat([]byte{0xFF}, 6), []byte{0x7F, 0x01, 0x05}))
+	if err != nil || len(d) != 1 {
+		t.Fatalf("%v %v", d, err)
+	}
+	// A 3-byte length that is within the data is read.
+	d, err = tlvDict(slices.Concat([]byte{0x05, 0x83, 0x00, 0x01, 0x00}, bytes.Repeat([]byte{9}, 256)))
+	if err != nil || len(d[5]) != 256 {
+		t.Fatalf("%v %v", len(d[5]), err)
 	}
 }
 
@@ -346,6 +424,20 @@ func TestATransportErrorIsReturned(t *testing.T) {
 	boom := errors.New("boom")
 	s := &scripted{err: boom}
 	if _, err := readYubiKeyInfo(context.Background(), s.call, Version{Major: 5, Minor: 8}, CapCBOR); !errors.Is(err, boom) {
+		t.Fatal(err)
+	}
+	// Also when the version has to be asked of the key first.
+	s = &scripted{err: boom}
+	if _, err := readYubiKeyInfo(context.Background(), s.call, Version{Build: 1}, CapCBOR); !errors.Is(err, boom) {
+		t.Fatal(err)
+	}
+	// And a page that is not well formed is the key's fault, not a success.
+	s = &scripted{pages: [][]byte{{9, 1}}}
+	if _, err := readYubiKeyInfo(context.Background(), s.call, Version{Major: 5, Minor: 8}, CapCBOR); !errors.Is(err, ErrYubiKeyData) {
+		t.Fatal(err)
+	}
+	s = &scripted{pages: [][]byte{{3, ykTagSerial, 4, 1}}}
+	if _, err := readYubiKeyInfo(context.Background(), s.call, Version{Major: 5, Minor: 8}, CapCBOR); err == nil || !strings.Contains(err.Error(), "runs past") {
 		t.Fatal(err)
 	}
 }

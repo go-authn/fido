@@ -304,59 +304,40 @@ func tlvParse(data []byte, offset, depth int) (tag uint64, valOff, valLen, end i
 	if depth > maxTLVDepth {
 		return 0, 0, 0, 0, ykErr("TLV nested more than %d deep", maxTLVDepth)
 	}
-	at := func(i int) (byte, bool) {
-		if i < 0 || i >= len(data) {
-			return 0, false
+	// Reading past the data yields 0 and sets short, which is checked once at
+	// the end: a zero byte ends every loop below, so a truncated element
+	// cannot make one run on.
+	short := false
+	at := func(i int) byte {
+		if i >= len(data) {
+			short = true
+			return 0
 		}
-		return data[i], true
+		return data[i]
 	}
-	bad := func() (uint64, int, int, int, error) {
-		return 0, 0, 0, 0, ykErr("invalid encoding of tag/length")
-	}
-	b, ok := at(offset)
-	if !ok {
-		return bad()
-	}
+	b := at(offset)
 	tag = uint64(b)
 	offset++
 	if b&0x1F == 0x1F { // long form
-		b, ok = at(offset)
-		if !ok {
-			return bad()
-		}
+		b = at(offset)
 		tag = tag<<8 | uint64(b)
 		offset++
 		for n := 0; b&0x80 == 0x80; n++ { // additional bytes
 			if n >= 6 { // a tag wider than 8 bytes is not a tag
-				return bad()
+				return 0, 0, 0, 0, ykErr("TLV tag wider than 8 bytes")
 			}
-			b, ok = at(offset)
-			if !ok {
-				return bad()
-			}
+			b = at(offset)
 			tag = tag<<8 | uint64(b)
 			offset++
 		}
 	}
-	ln, ok := at(offset)
-	if !ok {
-		return bad()
-	}
+	ln := at(offset)
 	offset++
 	var length int
 	if ln == 0x80 { // indefinite length: run until 0x0000
 		e := offset
-		for {
-			b0, ok0 := at(e)
-			b1, ok1 := at(e + 1)
-			if !ok0 || !ok1 {
-				return bad()
-			}
-			if b0 == 0 && b1 == 0 {
-				break
-			}
-			_, _, _, e, err = tlvParse(data, e, depth+1)
-			if err != nil {
+		for !(at(e) == 0 && at(e+1) == 0) {
+			if _, _, _, e, err = tlvParse(data, e, depth+1); err != nil {
 				return 0, 0, 0, 0, err
 			}
 		}
@@ -366,20 +347,20 @@ func tlvParse(data []byte, offset, depth int) (tag uint64, valOff, valLen, end i
 		length = int(ln)
 		if ln > 0x80 { // the length spans several bytes
 			n := int(ln) - 0x80
-			if n > 4 || offset+n > len(data) {
-				return bad()
+			if n > 3 { // more than 24 bits: no int overflow on a 32-bit build, and no HID reply is that long
+				return 0, 0, 0, 0, ykErr("TLV length of %d bytes", n)
 			}
 			length = 0
-			for _, c := range data[offset : offset+n] {
-				length = length<<8 | int(c)
+			for i := 0; i < n; i++ {
+				length = length<<8 | int(at(offset+i))
 			}
 			offset += n
 		}
 		end = offset + length
 	}
-	if length < 0 || end > len(data) || end < offset {
+	if short || end > len(data) {
 		// Python's Tlv.__init__ (l.347-349) raises "Incorrect TLV length" here.
-		return 0, 0, 0, 0, ykErr("TLV length %d runs past the data (%d bytes)", length, len(data))
+		return 0, 0, 0, 0, ykErr("TLV runs past the data (%d bytes)", len(data))
 	}
 	return tag, offset, length, end, nil
 }
@@ -412,34 +393,47 @@ func bytesToInt(b []byte) (uint64, error) {
 	return v, nil
 }
 
-// intTag reads tag as an integer, def when absent (data.get(tag, b"\0")).
-func intTag(d map[uint64][]byte, tag uint64) (uint64, error) {
-	b, ok := d[tag]
-	if !ok {
-		return 0, nil
-	}
-	return bytesToInt(b)
+// fields reads typed values out of the TLVs of a device-info reply and keeps
+// the FIRST error, so the parser checks once, at the end, instead of after
+// every field. A field that is absent reads as zero (data.get(tag, b"\0")).
+type fields struct {
+	d   map[uint64][]byte
+	err error
 }
 
-// versionOf is Version.from_bytes: exactly three bytes.
-func versionOf(b []byte) (YubiKeyVersion, error) {
+func (f *fields) fail(err error) {
+	if f.err == nil {
+		f.err = err
+	}
+}
+
+// int reads tag as a big-endian integer.
+func (f *fields) int(tag uint64) uint64 {
+	v, err := bytesToInt(f.d[tag])
+	f.fail(err)
+	return v
+}
+
+// version is Version.from_bytes: exactly three bytes.
+func (f *fields) version(b []byte) YubiKeyVersion {
 	if len(b) != 3 {
-		return YubiKeyVersion{}, ykErr("a version of %d bytes, not 3", len(b))
+		f.fail(ykErr("a version of %d bytes, not 3", len(b)))
+		return YubiKeyVersion{}
 	}
-	return YubiKeyVersion{b[0], b[1], b[2]}, nil
+	return YubiKeyVersion{b[0], b[1], b[2]}
 }
 
-// capOf reads a capability field.
-func capOf(b []byte) (YubiKeyCapability, error) {
-	v, err := bytesToInt(b)
-	if err != nil {
-		return 0, err
-	}
+// caps reads a capability field, which is at most 32 bits wide.
+func (f *fields) caps(tag uint64) YubiKeyCapability {
+	v := f.int(tag)
 	if v > 0xFFFFFFFF {
-		return 0, ykErr("capabilities %#x are wider than 32 bits", v)
+		f.fail(ykErr("capabilities %#x are wider than 32 bits", v))
 	}
-	return YubiKeyCapability(v), nil
+	return YubiKeyCapability(v)
 }
+
+// flag is `d.get(tag) == b"\x01"`.
+func (f *fields) flag(tag uint64) bool { return string(f.d[tag]) == "\x01" }
 
 // parseYubiKeyTLVs is DeviceInfo.parse_tlvs (yubikit/management.py l.340-418)
 // applied to the TLVs of every page already joined by tag (a later page
@@ -447,20 +441,15 @@ func capOf(b []byte) (YubiKeyCapability, error) {
 // defaultVersion is the firmware version the transport reported, used when the
 // key sends none.
 func parseYubiKeyTLVs(d map[uint64][]byte, defaultVersion YubiKeyVersion) (YubiKeyInfo, error) {
+	f := &fields{d: d}
 	var in YubiKeyInfo
-	in.Locked = string(d[ykTagConfigLock]) == "\x01"
-	serial, err := intTag(d, ykTagSerial)
-	if err != nil {
-		return in, err
-	}
+	in.Locked = f.flag(ykTagConfigLock)
+	serial := f.int(ykTagSerial)
 	if serial > 0xFFFFFFFF {
-		return in, ykErr("serial %d is wider than 32 bits", serial)
+		f.fail(ykErr("serial %d is wider than 32 bits", serial))
 	}
 	in.Serial = uint32(serial)
-	ff, err := intTag(d, ykTagFormFactor)
-	if err != nil {
-		return in, err
-	}
+	ff := f.int(ykTagFormFactor)
 	// FORM_FACTOR.from_code: the low nibble; a code that is not a member is
 	// Unknown (l.180-185).
 	if code := ff & 0xF; code <= uint64(FormFactorUSBCBio) {
@@ -469,122 +458,78 @@ func parseYubiKeyTLVs(d map[uint64][]byte, defaultVersion YubiKeyVersion) (YubiK
 	in.FIPS, in.SKY = ff&0x80 != 0, ff&0x40 != 0
 	version := defaultVersion
 	if v, ok := d[ykTagVersion]; ok {
-		if version, err = versionOf(v); err != nil {
-			return in, err
-		}
+		version = f.version(v)
 	}
-	if in.AutoEjectTimeout, err = intTag(d, ykTagAutoEject); err != nil {
-		return in, err
-	}
-	if in.ChallengeResponseTimeout, err = intTag(d, ykTagChalRespTimeout); err != nil {
-		return in, err
-	}
-	if in.DeviceFlags, err = intTag(d, ykTagDeviceFlags); err != nil {
-		return in, err
-	}
+	in.AutoEjectTimeout = f.int(ykTagAutoEject)
+	in.ChallengeResponseTimeout = f.int(ykTagChalRespTimeout)
+	in.DeviceFlags = f.int(ykTagDeviceFlags)
 
 	if version == (YubiKeyVersion{4, 2, 4}) { // doesn't report correctly (l.360)
 		in.USBSupported = 0x3F
 	} else {
-		raw, ok := d[ykTagUSBSupported]
-		if !ok {
-			return in, ykErr("no supported-USB-applications field")
+		if _, ok := d[ykTagUSBSupported]; !ok {
+			f.fail(ykErr("no supported-USB-applications field"))
 		}
-		if in.USBSupported, err = capOf(raw); err != nil {
-			return in, err
-		}
+		in.USBSupported = f.caps(ykTagUSBSupported)
 	}
-	if raw, ok := d[ykTagUSBEnabled]; ok { // from YubiKey 5.0.0
-		// Broken on YubiKey 4: 4.0.0 <= version < 5.0.0 (l.365).
-		if !(version.Major == 4) {
-			if in.USBEnabled, err = capOf(raw); err != nil {
-				return in, err
-			}
-			in.HasUSBEnabled = true
-		}
+	// From YubiKey 5.0.0; broken on YubiKey 4: 4.0.0 <= version < 5.0.0 (l.365).
+	if _, ok := d[ykTagUSBEnabled]; ok && version.Major != 4 {
+		in.USBEnabled = f.caps(ykTagUSBEnabled)
+		in.HasUSBEnabled = true
 	}
-	if raw, ok := d[ykTagNFCSupported]; ok { // a YubiKey with NFC
-		if in.NFCSupported, err = capOf(raw); err != nil {
-			return in, err
+	if _, ok := d[ykTagNFCSupported]; ok { // a YubiKey with NFC
+		in.NFCSupported = f.caps(ykTagNFCSupported)
+		if _, ok := d[ykTagNFCEnabled]; !ok {
+			f.fail(ykErr("NFC supported but no NFC-enabled field"))
 		}
-		en, ok := d[ykTagNFCEnabled]
-		if !ok {
-			return in, ykErr("NFC supported but no NFC-enabled field")
-		}
-		if in.NFCEnabled, err = capOf(en); err != nil {
-			return in, err
-		}
+		in.NFCEnabled = f.caps(ykTagNFCEnabled)
 		in.HasNFC = true
 	}
-	in.NFCRestricted = string(d[ykTagNFCRestricted]) == "\x01"
+	in.NFCRestricted = f.flag(ykTagNFCRestricted)
 	if pn := d[ykTagPartNumber]; utf8.Valid(pn) {
 		in.PartNumber = string(pn)
 	}
-	v, err := intTag(d, ykTagFIPSCapable)
-	if err != nil {
-		return in, err
-	}
-	in.FIPSCapable = fromFIPS(v)
-	if v, err = intTag(d, ykTagFIPSApproved); err != nil {
-		return in, err
-	}
-	in.FIPSApproved = fromFIPS(v)
-	in.PINComplexity = string(d[ykTagPINComplexity]) == "\x01"
-	if raw, ok := d[ykTagResetBlocked]; ok {
-		if in.ResetBlocked, err = capOf(raw); err != nil {
-			return in, err
-		}
-	}
+	in.FIPSCapable = fromFIPS(f.int(ykTagFIPSCapable))
+	in.FIPSApproved = fromFIPS(f.int(ykTagFIPSApproved))
+	in.PINComplexity = f.flag(ykTagPINComplexity)
+	in.ResetBlocked = f.caps(ykTagResetBlocked)
 	if vq := d[ykTagVersionQual]; len(vq) > 0 {
 		qd, err := tlvDict(vq)
-		if err != nil {
-			return in, err
-		}
-		var q YubiKeyVersionQualifier
+		f.fail(err)
+		q := fields{d: qd}
 		for _, t := range [...]uint64{1, 2, 3} {
 			if _, ok := qd[t]; !ok {
-				return in, ykErr("version qualifier lacks field %d", t)
+				f.fail(ykErr("version qualifier lacks field %d", t))
 			}
 		}
-		if q.Version, err = versionOf(qd[1]); err != nil {
-			return in, err
+		rt := q.int(2)
+		in.VersionQualifier = YubiKeyVersionQualifier{
+			Version: q.version(qd[1]), Type: YubiKeyReleaseType(rt), Iteration: q.int(3),
 		}
-		rt, err := bytesToInt(qd[2])
-		if err != nil {
-			return in, err
-		}
+		f.fail(q.err)
 		if rt > uint64(ReleaseFinal) {
-			return in, ykErr("release type %d", rt) // RELEASE_TYPE(n) raises (l.388)
+			f.fail(ykErr("release type %d", rt)) // RELEASE_TYPE(n) raises (l.388)
 		}
-		q.Type = YubiKeyReleaseType(rt)
-		if q.Iteration, err = bytesToInt(qd[3]); err != nil {
-			return in, err
-		}
-		in.VersionQualifier = q
-		if q.Type != ReleaseFinal { // the behavioural version (l.391-395)
-			version = q.Version
+		if in.VersionQualifier.Type != ReleaseFinal { // the behavioural version (l.391-395)
+			version = in.VersionQualifier.Version
 		}
 	} else {
 		in.VersionQualifier = YubiKeyVersionQualifier{Version: version, Type: ReleaseFinal}
 	}
 	in.Version = version
-	for _, f := range [...]struct {
+	for _, p := range [...]struct {
 		tag uint64
 		to  **YubiKeyVersion
 	}{{ykTagFPSVersion, &in.FPSVersion}, {ykTagSTMVersion, &in.STMVersion}} {
-		raw, ok := d[f.tag]
+		raw, ok := d[p.tag]
 		if !ok {
 			continue // default b"\0\0\0": zero, so None
 		}
-		fv, err := versionOf(raw)
-		if err != nil {
-			return in, err
-		}
-		if !fv.IsZero() {
-			*f.to = &fv
+		if fv := f.version(raw); !fv.IsZero() {
+			*p.to = &fv
 		}
 	}
-	return in, nil
+	return in, f.err
 }
 
 // ParseYubiKeyPages is ManagementSession._do_read_device_info (l.647-661) over
@@ -592,25 +537,44 @@ func parseYubiKeyTLVs(d map[uint64][]byte, defaultVersion YubiKeyVersion) (YubiK
 // rest. It joins pages while the more-data flag (tag 0x10) is set, and refuses
 // a last page that still asks for more.
 func ParseYubiKeyPages(pages [][]byte, defaultVersion YubiKeyVersion) (YubiKeyInfo, error) {
-	all := map[uint64][]byte{}
-	for i, p := range pages {
-		if len(p) == 0 || len(p)-1 != int(p[0]) {
-			return YubiKeyInfo{}, ykErr("page %d: invalid length", i)
-		}
-		d, err := tlvDict(p[1:])
+	j := pageJoiner{}
+	for _, p := range pages {
+		more, err := j.add(p)
 		if err != nil {
 			return YubiKeyInfo{}, err
 		}
-		more := string(d[ykTagMoreData]) == "\x01"
-		delete(d, ykTagMoreData)
-		for k, v := range d {
-			all[k] = v
-		}
 		if !more {
-			return parseYubiKeyTLVs(all, defaultVersion)
+			return parseYubiKeyTLVs(j.all, defaultVersion)
 		}
 	}
 	return YubiKeyInfo{}, ykErr("the last page asks for more")
+}
+
+// pageJoiner merges the TLVs of successive pages by tag.
+type pageJoiner struct {
+	all   map[uint64][]byte
+	pages int
+}
+
+// add reads one page and says whether the key has more to send.
+func (j *pageJoiner) add(p []byte) (more bool, err error) {
+	j.pages++
+	if len(p) == 0 || len(p)-1 != int(p[0]) {
+		return false, ykErr("page %d: the length byte does not match the %d bytes", j.pages-1, len(p))
+	}
+	d, err := tlvDict(p[1:])
+	if err != nil {
+		return false, err
+	}
+	if j.all == nil {
+		j.all = map[uint64][]byte{}
+	}
+	more = string(d[ykTagMoreData]) == "\x01"
+	delete(d, ykTagMoreData)
+	for k, v := range d {
+		j.all[k] = v
+	}
+	return more, nil
 }
 
 // ParseYubiKeyInfo parses ONE page of device information, the whole of it for
@@ -649,24 +613,19 @@ func (k *Key) YubiKeyInfo(ctx context.Context) (YubiKeyInfo, error) {
 func readYubiKeyInfo(ctx context.Context, call func(context.Context, byte, []byte) ([]byte, error), v Version, caps Capabilities) (YubiKeyInfo, error) {
 	fw := yubiKeyBase(v, caps)
 	read := func() (YubiKeyInfo, error) {
-		var pages [][]byte
+		j := pageJoiner{}
 		for page := 0; page < maxYubiKeyPages; page++ {
 			p, err := call(ctx, CmdYubiKeyReadConfig, []byte{byte(page)})
 			if err != nil {
 				return YubiKeyInfo{}, err
 			}
-			pages = append(pages, p)
-			if len(p) > 0 && len(p)-1 == int(p[0]) {
-				d, err := tlvDict(p[1:])
-				if err != nil {
-					return YubiKeyInfo{}, err
-				}
-				if string(d[ykTagMoreData]) != "\x01" {
-					return ParseYubiKeyPages(pages, fw)
-				}
-				continue
+			more, err := j.add(p)
+			if err != nil {
+				return YubiKeyInfo{}, err
 			}
-			return YubiKeyInfo{}, ykErr("page %d: invalid length", page)
+			if !more {
+				return parseYubiKeyTLVs(j.all, fw)
+			}
 		}
 		return YubiKeyInfo{}, ykErr("more than %d pages", maxYubiKeyPages)
 	}
