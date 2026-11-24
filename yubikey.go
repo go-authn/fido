@@ -337,9 +337,14 @@ func tlvParse(data []byte, offset, depth int) (tag uint64, valOff, valLen, end i
 	if ln == 0x80 { // indefinite length: run until 0x0000
 		e := offset
 		for !(at(e) == 0 && at(e+1) == 0) {
-			if _, _, _, e, err = tlvParse(data, e, depth+1); err != nil {
+			var next int
+			if _, _, _, next, err = tlvParse(data, e, depth+1); err != nil {
 				return 0, 0, 0, 0, err
 			}
+			// An element is at least a tag and a length: a step of 2 is the
+			// least that is made, so no answer from the call above can keep
+			// this loop from reaching the end of the data.
+			e = max(next, e+2)
 		}
 		length = e - offset
 		end = e + 2
