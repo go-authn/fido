@@ -380,7 +380,9 @@ func tlvDict(data []byte) (map[uint64][]byte, error) {
 			return nil, err
 		}
 		m[tag] = data[off : off+ln]
-		data = data[end:]
+		// An element is at least a tag and a length, so end is at least 2;
+		// the step is never less than one byte, whatever the call returned.
+		data = data[max(end, 1):]
 	}
 	return m, nil
 }
