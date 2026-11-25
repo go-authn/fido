@@ -134,8 +134,9 @@ func printCert(out io.Writer, i int, c *x509.Certificate, authAAGUID [16]byte) {
 
 // attestOpts holds the flags of `fido attest`.
 type attestOpts struct {
-	pin    pinSrc
-	saveTo string
+	pin        pinSrc
+	saveTo     string
+	verifyFile string
 }
 
 // checkSaveTo refuses before the key is touched: nothing is overwritten.
@@ -174,12 +175,17 @@ func attestCmd() *cobra.Command {
 			"FIDO MDS lists for that AAGUID.\n\n" +
 			"The credential is NOT discoverable: it is not stored on the key (a non-resident credential " +
 			"is a blob the key can decrypt later), so there is nothing to delete. Nothing printed is a " +
-			"secret; a PIN is read only from the terminal, --pin-file or --pin-from, never an argument.",
+			"secret; a PIN is read only from the terminal, --pin-file or --pin-from, never an argument.\n\n" +
+			"--save-to writes a versioned envelope (CBOR map: v, rpId, clientDataJSON, clientDataHash, " +
+			"attestationObject) so the whole verification can be redone later with --verify-file, " +
+			"offline and without the key. The file holds the attestation certificate, so the key's " +
+			"attestation serial number: it identifies the key (or its batch), it is not a secret.",
 		Args: cobra.NoArgs,
 	}
 	refresh := addRefresh(c)
 	o.pin.addFlags(c, "pin", "the PIN, when the key has no built-in verification or this is given,")
-	c.Flags().StringVar(&o.saveTo, "save-to", "", "write the attestation object (CBOR) to this new `FILE` (mode 0600; an existing file is never overwritten)")
+	c.Flags().StringVar(&o.saveTo, "save-to", "", "write the attestation envelope (CBOR: attestationObject, clientDataJSON, clientDataHash, rpId; see --verify-file) to this new `FILE` (mode 0600; an existing file is never overwritten). It holds the key's attestation certificate, hence its serial number: identifying, not secret")
+	c.Flags().StringVar(&o.verifyFile, "verify-file", "", "verify an envelope saved by --save-to, offline and without a key: statement signature, certificate rules and the MDS chain, exactly as a live attest does (the MDS is read from its cache; --refresh fetches it)")
 	c.RunE = func(cmd *cobra.Command, _ []string) error { return runAttest(cmd, o, *refresh) }
 	return c
 }
@@ -187,6 +193,12 @@ func attestCmd() *cobra.Command {
 func runAttest(cmd *cobra.Command, o attestOpts, refresh bool) error {
 	ctx := ctxOf(cmd)
 	out := cmd.OutOrStdout()
+	if o.verifyFile != "" {
+		if o.saveTo != "" || o.pin.file != "" || o.pin.from != "" {
+			return errors.New("--verify-file reads a saved envelope and uses no key: it takes neither --save-to nor a PIN source")
+		}
+		return runVerifyFile(cmd, o.verifyFile, refresh)
+	}
 	if err := checkSaveTo(o.saveTo); err != nil {
 		return err
 	}
@@ -250,12 +262,26 @@ func runAttest(cmd *cobra.Command, o attestOpts, refresh bool) error {
 		return err
 	}
 	if o.saveTo != "" {
-		if err := writeNew(o.saveTo, obj); err != nil {
+		env := encodeEnvelope(envelope{RPID: attestRPID, ClientDataJSON: cdJSON, ClientDataHash: hash[:], AttestationObject: obj})
+		if err := writeNew(o.saveTo, env); err != nil {
 			return fmt.Errorf("--save-to: %w", err)
 		}
-		fmt.Fprintf(out, "attestation object (%d bytes, CBOR) saved to %s\n", len(obj), safe(o.saveTo))
+		fmt.Fprintf(out, "attestation envelope (%d bytes, CBOR, version %d) saved to %s\n", len(env), envelopeVersion, safe(o.saveTo))
 	}
-	return reportAttestation(cmd, out, att, obj, challenge, cdJSON, refresh)
+	return reportAttestation(cmd, out, att, obj, attestRPID, attestOrigin, challenge, cdJSON, refresh)
+}
+
+// runVerifyFile redoes the whole verification of a saved envelope without a key.
+func runVerifyFile(cmd *cobra.Command, path string, refresh bool) error {
+	env, err := readEnvelopeFile(path)
+	if err != nil {
+		return fmt.Errorf("--verify-file: %w", err)
+	}
+	challenge, origin, att, err := env.verifyInputs()
+	if err != nil {
+		return fmt.Errorf("--verify-file: %w", err)
+	}
+	return reportAttestation(cmd, cmd.OutOrStdout(), att, env.AttestationObject, env.RPID, origin, challenge, env.ClientDataJSON, refresh)
 }
 
 // attestationObject is the WebAuthn attestationObject (§6.5) of a registration,
@@ -295,12 +321,12 @@ func flagNames(f authn.Flags) string {
 // reportAttestation prints the evidence and the verdicts. It prints every
 // certificate before it judges any, so that a statement that fails still shows
 // what it carried; the returned error says which verdict failed.
-func reportAttestation(cmd *cobra.Command, out io.Writer, att *authn.Attestation, obj, challenge, cdJSON []byte, refresh bool) error {
+func reportAttestation(cmd *cobra.Command, out io.Writer, att *authn.Attestation, obj []byte, rpID, origin string, challenge, cdJSON []byte, refresh bool) error {
 	aaguid := att.Parsed.AAGUID
 	fmt.Fprintf(out, "fmt:            %s\n", safe(att.Format))
 	fmt.Fprintf(out, "authData AAGUID: %s\n", fmtAAGUID(aaguid[:]))
 	fmt.Fprintf(out, "flags:          0x%02x (%s)\n", byte(att.Parsed.Flags), flagNames(att.Parsed.Flags))
-	fmt.Fprintf(out, "credential:     discardable: made non-resident (rk=false) for %s, so nothing is stored on the key\n", attestRPID)
+	fmt.Fprintf(out, "credential:     discardable: made non-resident (rk=false) for %s, so nothing is stored on the key\n", safe(rpID))
 
 	s, perr := parseStmt(att.Statement)
 	if perr != nil {
@@ -319,7 +345,7 @@ func reportAttestation(cmd *cobra.Command, out io.Writer, att *authn.Attestation
 	}
 
 	var failed []string
-	rp := webauthn.RelyingParty{ID: attestRPID, Origins: []string{attestOrigin}}
+	rp := webauthn.RelyingParty{ID: rpID, Origins: []string{origin}}
 	_, wa, verr := rp.VerifyRegistrationAttested(challenge, cdJSON, obj, webauthn.Policy{RequireUV: true})
 	if verr != nil {
 		fmt.Fprintf(out, "statement:      NOT VERIFIED: %s\n", safe(verr.Error()))

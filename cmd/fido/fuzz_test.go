@@ -38,3 +38,25 @@ func FuzzAliasTable(f *testing.F) {
 		}
 	})
 }
+
+// An envelope is a file from anywhere: decoding it and deriving the verifier's
+// inputs never panics, and whatever decodes re-encodes to something that decodes
+// to the same envelope.
+func FuzzEnvelope(f *testing.F) {
+	good := encodeEnvelope(envelope{RPID: attestRPID, ClientDataJSON: []byte(`{"challenge":"AAAA"}`), ClientDataHash: make([]byte, 32), AttestationObject: []byte{0xa0}})
+	for _, s := range [][]byte{nil, good, good[:len(good)/2], append(append([]byte(nil), good...), 0), {0xa0}, {0xbf, 0xff}, []byte("garbage")} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		e, err := decodeEnvelope(b)
+		if err != nil {
+			return
+		}
+		e.verifyInputs() //nolint:errcheck // must not panic
+		e2, err := decodeEnvelope(encodeEnvelope(e))
+		if err != nil || e2.RPID != e.RPID || string(e2.ClientDataJSON) != string(e.ClientDataJSON) ||
+			string(e2.ClientDataHash) != string(e.ClientDataHash) || string(e2.AttestationObject) != string(e.AttestationObject) {
+			t.Fatalf("round trip: %v", err)
+		}
+	})
+}

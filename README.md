@@ -259,6 +259,7 @@ fido fingerprint add [--name N] | list | rename ID NAME | remove ID
 fido name set NAME | show | remove          # a name stored ON the key
 fido identify [--refresh]                   # the key's model from the FIDO MDS (read-only)
 fido attest [--pin-file F | --pin-from REF] [--save-to FILE]   # a verified attestation of the key (asks for a touch + fingerprint/PIN)
+fido attest --verify-file FILE [--refresh]  # re-verify a saved envelope offline, no key
 fido mds lookup AAGUID | search WORD [--refresh]   # the verified FIDO MDS3 blob, no key needed
 fido yubikey info                           # like `ykman info` (read-only), with a PIV/CCID verdict
 ```
@@ -281,7 +282,16 @@ validity and whether it carries the `id-fido-gen-ce-aaguid` extension
 (1.3.6.1.4.1.45724.1.1.4), its value and whether it equals authData's. It then
 verifies the statement's signature and the chain to the attestation roots the
 verified MDS lists for that AAGUID, and exits 1 if either fails. `--save-to FILE`
-keeps the attestation object (CBOR, mode 0600, never overwriting).
+keeps an envelope (CBOR, mode 0600, never overwriting): one canonical CBOR map
+`{v: 1, rpId, clientDataJSON, clientDataHash, attestationObject}`. The envelope
+carries what the attestation signature covers (authData || clientDataHash), so
+`fido attest --verify-file FILE` redoes the whole verification later, offline
+and without the key: statement signature, certificate rules and the MDS chain
+(from the cache; `--refresh` fetches it). A file of another version, with an
+unknown member, a duplicate key or trailing bytes is refused, and so is a
+`clientDataHash` that is not the SHA-256 of `clientDataJSON`. The file holds the
+attestation certificate, hence the key's attestation serial number: that
+identifies the key (or its batch); it is not a secret.
 
 `fido yubikey info` reads Yubico's device info (firmware, serial, form factor,
 the applications supported and enabled over USB and NFC, FIPS/Security Key

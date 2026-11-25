@@ -1,5 +1,18 @@
 # Changelog
 
+## cmd/fido v0.10.0
+
+- `fido attest --save-to` now writes a versioned envelope (canonical CBOR map
+  `{v: 1, rpId, clientDataJSON, clientDataHash, attestationObject}`) instead of
+  the bare attestation object, which could not be re-verified: the attestation
+  signature covers authData || clientDataHash and the hash was not saved.
+  Files written by v0.9.0 are bare objects and are refused by `--verify-file`.
+- New `fido attest --verify-file FILE [--refresh]`: redoes the statement
+  signature, the certificate rules and the MDS chain offline, without a key.
+  Unknown versions, unknown members, duplicate keys and trailing bytes are refused.
+- The saved file holds the attestation certificate, so the key's attestation
+  serial: identifying, not secret.
+
 ## cmd/fido v0.9.0
 
 - New `fido attest [--pin-file FILE | --pin-from REF] [--refresh] [--save-to FILE]`:
