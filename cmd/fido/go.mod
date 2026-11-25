@@ -15,6 +15,7 @@ require (
 
 require (
 	github.com/ebitengine/purego v0.11.2 // indirect
+	github.com/go-authn/webauthn v0.3.0 // indirect
 	github.com/go-freedesktop/secretservice v0.4.0 // indirect
 	github.com/go-macos/iokit v0.14.0 // indirect
 	github.com/go-macos/keychain v0.3.1 // indirect

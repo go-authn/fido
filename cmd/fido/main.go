@@ -7,6 +7,7 @@
 //	fido fingerprint add [--name N] [--timeout D] [--pin-file FILE | --pin-from REF]
 //	fido fingerprint list|rename ID NAME|remove ID [--pin-file FILE | --pin-from REF]
 //	fido identify
+//	fido attest [--pin-file FILE | --pin-from REF] [--save-to FILE]
 //	fido yubikey info
 //	fido mds lookup AAGUID | fido mds search WORD
 //
@@ -57,6 +58,7 @@ type keyAPI interface {
 	NameTokens(ctx context.Context, pin string, proto authn.PINProtocol, info authn.Info) (authn.NameTokens, error)
 	// YubiKeyInfo reads Yubico's device info (read-only); only for a YubiKey.
 	YubiKeyInfo(context.Context) (authn.YubiKeyInfo, error)
+	MakeCredential(context.Context, authn.MakeCredentialRequest) (*authn.Attestation, error)
 	// Device says which listed key this is.
 	Device() device
 	Close() error
@@ -253,7 +255,7 @@ func RootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().String("device", "", "act on the key with this `ID` or name (see fido list; a name must be on exactly one key); with several keys attached and no --device, touch the one to use")
-	root.AddCommand(listCmd(), infoCmd(), identifyCmd(), yubikeyCmd(), mdsCmd(), nameCmd(), pinCmd(), fingerprintCmd())
+	root.AddCommand(listCmd(), infoCmd(), identifyCmd(), attestCmd(), yubikeyCmd(), mdsCmd(), nameCmd(), pinCmd(), fingerprintCmd())
 	return root
 }
 

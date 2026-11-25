@@ -258,6 +258,7 @@ fido pin set | change
 fido fingerprint add [--name N] | list | rename ID NAME | remove ID
 fido name set NAME | show | remove          # a name stored ON the key
 fido identify [--refresh]                   # the key's model from the FIDO MDS (read-only)
+fido attest [--pin-file F | --pin-from REF] [--save-to FILE]   # a verified attestation of the key (asks for a touch + fingerprint/PIN)
 fido mds lookup AAGUID | search WORD [--refresh]   # the verified FIDO MDS3 blob, no key needed
 fido yubikey info                           # like `ykman info` (read-only), with a PIV/CCID verdict
 ```
@@ -270,6 +271,17 @@ verified on every use against the pinned GlobalSign Root R46: there is no flag
 that skips the verification. `fido identify` reads the AAGUID the key reports in
 `getInfo` and looks it up; it says each time that this AAGUID is the key's own
 claim, and that only a verified attestation proves the model.
+
+`fido attest` is that attestation. It makes a throwaway, non-resident
+credential for the reserved relying party `fido-attest.invalid` (nothing is
+stored on the key; a PIN is read like everywhere else, never from an argument),
+with user verification required, and prints the format, the authData AAGUID,
+the flags and, for every certificate of the statement, subject, issuer, serial,
+validity and whether it carries the `id-fido-gen-ce-aaguid` extension
+(1.3.6.1.4.1.45724.1.1.4), its value and whether it equals authData's. It then
+verifies the statement's signature and the chain to the attestation roots the
+verified MDS lists for that AAGUID, and exits 1 if either fails. `--save-to FILE`
+keeps the attestation object (CBOR, mode 0600, never overwriting).
 
 `fido yubikey info` reads Yubico's device info (firmware, serial, form factor,
 the applications supported and enabled over USB and NFC, FIPS/Security Key
