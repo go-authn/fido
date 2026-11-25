@@ -1,5 +1,21 @@
 # Changelog
 
+## cmd/fido v0.9.0
+
+- New `fido attest [--pin-file FILE | --pin-from REF] [--refresh] [--save-to FILE]`:
+  makes a throwaway non-resident credential for the reserved relying party
+  `fido-attest.invalid` with user verification required (the fingerprint when
+  the key has one, else the PIN), and prints what the key attested: format,
+  algorithm, the authData AAGUID, the flags, and for every x5c certificate its
+  subject, issuer, serial, validity and whether it carries
+  `id-fido-gen-ce-aaguid` (1.3.6.1.4.1.45724.1.1.4), its value and whether it
+  equals authData's AAGUID. The statement is verified with
+  go-authn/webauthn v0.3.0 (signature over authData||clientDataHash, WebAuthn
+  8.2.1, AAGUID agreement) and the chain against the attestation roots of the
+  verified FIDO MDS for that AAGUID. `--save-to` writes the attestation object
+  (CBOR, mode 0600) and never overwrites. Exit status 1 when any verdict fails;
+  the evidence is printed first either way.
+
 ## cmd/fido v0.8.0
 
 - New `fido mds lookup AAGUID` and `fido mds search WORD`: the FIDO Metadata

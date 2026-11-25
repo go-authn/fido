@@ -47,6 +47,10 @@ type fake struct {
 	removedNames                                          int
 	readNameErr, setNameErr, removeNameErr, nameTokensErr error
 
+	// makeCredential: the request seen, and what to answer.
+	mcReq authn.MakeCredentialRequest
+	mcFn  func(authn.MakeCredentialRequest) (*authn.Attestation, error)
+
 	// injected errors
 	ykInfo                                                          authn.YubiKeyInfo
 	ykErr                                                           error
