@@ -373,10 +373,7 @@ func savedEnvelope(t *testing.T) (string, envelope) {
 
 func rewrite(t *testing.T, e envelope) string {
 	t.Helper()
-	b, err := encodeEnvelope(e)
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := encodeEnvelope(e)
 	p := filepath.Join(t.TempDir(), "t.cbor")
 	if err := os.WriteFile(p, b, 0o600); err != nil {
 		t.Fatal(err)
@@ -435,11 +432,16 @@ func TestAttestVerifyFileRefusals(t *testing.T) {
 	if _, _, err := run("attest", "--verify-file", p2); err == nil || !strings.Contains(err.Error(), "version 2 is not supported") {
 		t.Errorf("%v", err)
 	}
-	if _, _, err := run("attest", "--verify-file", filepath.Join(t.TempDir(), "absent")); err == nil {
-		t.Error("a missing file verified")
+	if _, _, err := run("attest", "--verify-file", filepath.Join(t.TempDir(), "absent")); err == nil || !strings.Contains(err.Error(), "--verify-file") {
+		t.Errorf("a missing file: %v", err)
 	}
-	if _, _, err := run("attest", "--verify-file", p, "--save-to", filepath.Join(t.TempDir(), "x")); err == nil {
-		t.Error("--verify-file with --save-to accepted")
+	if _, _, err := run("attest", "--verify-file", t.TempDir()); err == nil || !strings.Contains(err.Error(), "--verify-file") {
+		t.Errorf("a directory: %v", err)
+	}
+	for _, extra := range [][]string{{"--save-to", filepath.Join(t.TempDir(), "x")}, {"--pin-file", p}, {"--pin-from", "keychain:x"}} {
+		if _, _, err := run(append([]string{"attest", "--verify-file", p}, extra...)...); err == nil || !strings.Contains(err.Error(), "uses no key") {
+			t.Errorf("--verify-file with %v: %v", extra, err)
+		}
 	}
 	// The bare attestation object (the format before envelopes) is refused.
 	obj := filepath.Join(t.TempDir(), "obj")
@@ -452,7 +454,9 @@ func TestAttestVerifyFileRefusals(t *testing.T) {
 func TestDecodeEnvelopeRefusals(t *testing.T) {
 	good := envelope{RPID: "x", ClientDataJSON: []byte("{}"), ClientDataHash: make([]byte, 32), AttestationObject: []byte{1}}
 	enc := func(m map[string]any) []byte { b, _ := ctap2Enc.Marshal(m); return b }
-	gb, _ := encodeEnvelope(good)
+	gb := encodeEnvelope(good)
+	big := good
+	big.ClientDataJSON = make([]byte, maxEnvelopeSize)
 	cases := map[string][]byte{
 		"trailing":    append(append([]byte(nil), gb...), 0),
 		"unknown key": enc(map[string]any{"v": 1, "rpId": "x", "clientDataJSON": []byte("{}"), "clientDataHash": make([]byte, 32), "attestationObject": []byte{1}, "extra": 1}),
@@ -460,7 +464,7 @@ func TestDecodeEnvelopeRefusals(t *testing.T) {
 		"no rp":       enc(map[string]any{"v": 1, "rpId": "", "clientDataJSON": []byte("{}"), "clientDataHash": make([]byte, 32), "attestationObject": []byte{1}}),
 		"no object":   enc(map[string]any{"v": 1, "rpId": "x", "clientDataJSON": []byte("{}"), "clientDataHash": make([]byte, 32), "attestationObject": []byte{}}),
 		"no json":     enc(map[string]any{"v": 1, "rpId": "x", "clientDataJSON": []byte{}, "clientDataHash": make([]byte, 32), "attestationObject": []byte{1}}),
-		"too big":     make([]byte, maxEnvelopeSize+1),
+		"too big":     encodeEnvelope(big),
 		"empty":       nil,
 		"v0":          enc(map[string]any{"v": 0, "rpId": "x", "clientDataJSON": []byte("{}"), "clientDataHash": make([]byte, 32), "attestationObject": []byte{1}}),
 	}
@@ -479,15 +483,21 @@ func TestEnvelopeVerifyInputsRefusals(t *testing.T) {
 		h := sha256.Sum256([]byte(s))
 		return envelope{ClientDataJSON: []byte(s), ClientDataHash: h[:], AttestationObject: []byte{0xa0}}
 	}
-	for name, e := range map[string]envelope{
-		"not json":     cdOf("x"),
-		"no challenge": cdOf(`{"type":"webauthn.create"}`),
-		"not cbor":     func() envelope { e := cdOf(`{"challenge":"AAAA"}`); e.AttestationObject = []byte{0xff}; return e }(),
-		"bad authData": cdOf(`{"challenge":"AAAA"}`),
+	badObj := cdOf(`{"challenge":"AAAA"}`)
+	badObj.AttestationObject = []byte{0xff}
+	for want, e := range map[string]envelope{
+		"is not JSON":                cdOf("x"),
+		"no base64url challenge":     cdOf(`{"type":"webauthn.create"}`),
+		"attestationObject is not":   badObj,
+		"attestationObject authData": cdOf(`{"challenge":"AAAA"}`),
 	} {
-		if _, _, _, err := e.verifyInputs(); err == nil {
-			t.Errorf("%s accepted", name)
+		_, _, att, err := e.verifyInputs()
+		if err == nil || !strings.Contains(err.Error(), want) || att == nil {
+			t.Errorf("%s: %v", want, err)
 		}
+	}
+	if _, _, _, err := cdOf(`{"challenge":"!!!"}`).verifyInputs(); err == nil || !strings.Contains(err.Error(), "no base64url challenge") {
+		t.Errorf("a challenge that is not base64url: %v", err)
 	}
 }
 

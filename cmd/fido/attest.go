@@ -262,10 +262,7 @@ func runAttest(cmd *cobra.Command, o attestOpts, refresh bool) error {
 		return err
 	}
 	if o.saveTo != "" {
-		env, err := encodeEnvelope(envelope{RPID: attestRPID, ClientDataJSON: cdJSON, ClientDataHash: hash[:], AttestationObject: obj})
-		if err != nil {
-			return fmt.Errorf("--save-to: %w", err)
-		}
+		env := encodeEnvelope(envelope{RPID: attestRPID, ClientDataJSON: cdJSON, ClientDataHash: hash[:], AttestationObject: obj})
 		if err := writeNew(o.saveTo, env); err != nil {
 			return fmt.Errorf("--save-to: %w", err)
 		}

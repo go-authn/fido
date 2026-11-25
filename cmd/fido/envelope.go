@@ -44,9 +44,12 @@ type envelope struct {
 	AttestationObject []byte `cbor:"attestationObject"`
 }
 
-func encodeEnvelope(e envelope) ([]byte, error) {
+// encodeEnvelope never fails: a struct of one uint, one string and byte strings
+// is always encodable.
+func encodeEnvelope(e envelope) []byte {
 	e.V = envelopeVersion
-	return ctap2Enc.Marshal(e)
+	b, _ := ctap2Enc.Marshal(e)
+	return b
 }
 
 var envelopeDec, _ = cbor.DecOptions{
@@ -114,15 +117,15 @@ type clientData struct {
 // the clientDataJSON the verifier will recompute.
 func (e envelope) verifyInputs() (challenge []byte, origin string, att *authn.Attestation, err error) {
 	if sum := sha256.Sum256(e.ClientDataJSON); !bytes.Equal(sum[:], e.ClientDataHash) {
-		return nil, "", nil, errors.New("clientDataHash is not the SHA-256 of clientDataJSON: the attestation signature cannot verify over it")
+		return nil, "", &authn.Attestation{}, errors.New("clientDataHash is not the SHA-256 of clientDataJSON: the attestation signature cannot verify over it")
 	}
 	var cd clientData
 	if err := json.Unmarshal(e.ClientDataJSON, &cd); err != nil {
-		return nil, "", nil, fmt.Errorf("clientDataJSON is not JSON: %w", err)
+		return nil, "", &authn.Attestation{}, fmt.Errorf("clientDataJSON is not JSON: %w", err)
 	}
 	challenge, err = base64.RawURLEncoding.DecodeString(cd.Challenge)
 	if err != nil || len(challenge) == 0 {
-		return nil, "", nil, errors.New("clientDataJSON has no base64url challenge")
+		return nil, "", &authn.Attestation{}, errors.New("clientDataJSON has no base64url challenge")
 	}
 	var ao struct {
 		Fmt      string          `cbor:"fmt"`
@@ -130,11 +133,11 @@ func (e envelope) verifyInputs() (challenge []byte, origin string, att *authn.At
 		AuthData []byte          `cbor:"authData"`
 	}
 	if err := cbor.Unmarshal(e.AttestationObject, &ao); err != nil {
-		return nil, "", nil, fmt.Errorf("attestationObject is not CBOR: %w", err)
+		return nil, "", &authn.Attestation{}, fmt.Errorf("attestationObject is not CBOR: %w", err)
 	}
 	parsed, err := authn.ParseAuthData(ao.AuthData)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("attestationObject authData: %w", err)
+		return nil, "", &authn.Attestation{}, fmt.Errorf("attestationObject authData: %w", err)
 	}
 	return challenge, cd.Origin, &authn.Attestation{Format: ao.Fmt, AuthData: ao.AuthData, Parsed: parsed, Statement: []byte(ao.AttStmt)}, nil
 }
