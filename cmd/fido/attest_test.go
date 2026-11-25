@@ -432,10 +432,10 @@ func TestAttestVerifyFileRefusals(t *testing.T) {
 	if _, _, err := run("attest", "--verify-file", p2); err == nil || !strings.Contains(err.Error(), "version 2 is not supported") {
 		t.Errorf("%v", err)
 	}
-	if _, _, err := run("attest", "--verify-file", filepath.Join(t.TempDir(), "absent")); err == nil || !strings.Contains(err.Error(), "--verify-file") {
+	if _, _, err := run("attest", "--verify-file", filepath.Join(t.TempDir(), "absent")); err == nil || !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a missing file: %v", err)
 	}
-	if _, _, err := run("attest", "--verify-file", t.TempDir()); err == nil || !strings.Contains(err.Error(), "--verify-file") {
+	if _, _, err := run("attest", "--verify-file", t.TempDir()); err == nil || !strings.Contains(err.Error(), "is a directory") {
 		t.Errorf("a directory: %v", err)
 	}
 	for _, extra := range [][]string{{"--save-to", filepath.Join(t.TempDir(), "x")}, {"--pin-file", p}, {"--pin-from", "keychain:x"}} {
