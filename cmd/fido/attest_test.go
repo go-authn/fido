@@ -325,6 +325,7 @@ func TestAttestSaveTo(t *testing.T) {
 	if err != nil || fi.Mode().Perm() != 0o600 || fi.Size() == 0 {
 		t.Fatalf("%v %v", fi, err)
 	}
+	sentHash := f.mcReq.ClientDataHash
 	// Never overwritten, and refused before the key is touched.
 	f.mcReq = authn.MakeCredentialRequest{}
 	if _, _, err := run("attest", "--save-to", p); err == nil || !strings.Contains(err.Error(), "never overwrites") || f.mcReq.RP.ID != "" {
@@ -338,11 +339,155 @@ func TestAttestSaveTo(t *testing.T) {
 	if _, _, err := run("attest", "--save-to", l); err == nil {
 		t.Error("a dangling symlink was written through")
 	}
-	// The saved object parses back as the attestation it was.
+	// The saved envelope holds the attestation object and what it was signed with.
 	b, _ := os.ReadFile(p)
+	e, err := decodeEnvelope(b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var m map[string]any
-	if err := cbor.Unmarshal(b, &m); err != nil || m["fmt"] != "packed" {
+	if err := cbor.Unmarshal(e.AttestationObject, &m); err != nil || m["fmt"] != "packed" {
 		t.Errorf("%v %v", m, err)
+	}
+	if e.RPID != attestRPID || !bytes.Equal(e.ClientDataHash, sentHash) {
+		t.Errorf("rp %q hash %x vs sent %x", e.RPID, e.ClientDataHash, sentHash)
+	}
+}
+
+// savedEnvelope runs attest --save-to and returns the path and its envelope.
+func savedEnvelope(t *testing.T) (string, envelope) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "att.cbor")
+	// The envelope is written before the verdicts: a failing attestation is saved too.
+	run("attest", "--save-to", p)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := decodeEnvelope(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p, e
+}
+
+func rewrite(t *testing.T, e envelope) string {
+	t.Helper()
+	b, err := encodeEnvelope(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "t.cbor")
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestAttestVerifyFileRoundTrip(t *testing.T) {
+	f := attestFake(t, attestCase{ext: extMatch})
+	p, _ := savedEnvelope(t)
+	f.mcReq = authn.MakeCredentialRequest{}
+	use(t, newFake(), errNoKey) // no key is needed, or even present
+	out, _, err := run("attest", "--verify-file", p)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"statement:      VERIFIED", "chain:          VERIFIED", "blob no 9", "serial:    abcdef"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+}
+
+func TestAttestVerifyFileTamperedHash(t *testing.T) {
+	attestFake(t, attestCase{ext: extMatch})
+	_, e := savedEnvelope(t)
+	// Only the hash field changed: it no longer matches clientDataJSON.
+	e.ClientDataHash[0] ^= 1
+	out, _, err := run("attest", "--verify-file", rewrite(t, e))
+	if err == nil || !strings.Contains(err.Error(), "signature cannot verify") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// clientDataJSON changed consistently (new challenge, new hash): the
+	// attestation signature, made over the old hash, fails.
+	attestFake(t, attestCase{ext: extMatch})
+	_, e = savedEnvelope(t)
+	e.ClientDataJSON = []byte(`{"type":"webauthn.create","challenge":"` + base64.RawURLEncoding.EncodeToString(make([]byte, 32)) + `","origin":"` + attestOrigin + `"}`)
+	h := sha256.Sum256(e.ClientDataJSON)
+	e.ClientDataHash = h[:]
+	out, _, err = run("attest", "--verify-file", rewrite(t, e))
+	if err == nil || !strings.Contains(out, "statement:      NOT VERIFIED") || !strings.Contains(out, "signature") || strings.Contains(out, "chain:          VERIFIED") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+func TestAttestVerifyFileRefusals(t *testing.T) {
+	attestFake(t, attestCase{ext: extMatch, wrongCA: true})
+	p, e := savedEnvelope(t)
+	if out, _, err := run("attest", "--verify-file", p); err == nil || !strings.Contains(out, "chain:          NOT VERIFIED") {
+		t.Errorf("a wrong root verified: %v\n%s", err, out)
+	}
+	e.V = 2
+	b, _ := ctap2Enc.Marshal(e)
+	p2 := filepath.Join(t.TempDir(), "v2")
+	os.WriteFile(p2, b, 0o600)
+	if _, _, err := run("attest", "--verify-file", p2); err == nil || !strings.Contains(err.Error(), "version 2 is not supported") {
+		t.Errorf("%v", err)
+	}
+	if _, _, err := run("attest", "--verify-file", filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Error("a missing file verified")
+	}
+	if _, _, err := run("attest", "--verify-file", p, "--save-to", filepath.Join(t.TempDir(), "x")); err == nil {
+		t.Error("--verify-file with --save-to accepted")
+	}
+	// The bare attestation object (the format before envelopes) is refused.
+	obj := filepath.Join(t.TempDir(), "obj")
+	os.WriteFile(obj, e.AttestationObject, 0o600)
+	if _, _, err := run("attest", "--verify-file", obj); err == nil || !strings.Contains(err.Error(), "not an attestation envelope") {
+		t.Errorf("%v", err)
+	}
+}
+
+func TestDecodeEnvelopeRefusals(t *testing.T) {
+	good := envelope{RPID: "x", ClientDataJSON: []byte("{}"), ClientDataHash: make([]byte, 32), AttestationObject: []byte{1}}
+	enc := func(m map[string]any) []byte { b, _ := ctap2Enc.Marshal(m); return b }
+	gb, _ := encodeEnvelope(good)
+	cases := map[string][]byte{
+		"trailing":    append(append([]byte(nil), gb...), 0),
+		"unknown key": enc(map[string]any{"v": 1, "rpId": "x", "clientDataJSON": []byte("{}"), "clientDataHash": make([]byte, 32), "attestationObject": []byte{1}, "extra": 1}),
+		"short hash":  enc(map[string]any{"v": 1, "rpId": "x", "clientDataJSON": []byte("{}"), "clientDataHash": []byte{1}, "attestationObject": []byte{1}}),
+		"no rp":       enc(map[string]any{"v": 1, "rpId": "", "clientDataJSON": []byte("{}"), "clientDataHash": make([]byte, 32), "attestationObject": []byte{1}}),
+		"no object":   enc(map[string]any{"v": 1, "rpId": "x", "clientDataJSON": []byte("{}"), "clientDataHash": make([]byte, 32), "attestationObject": []byte{}}),
+		"no json":     enc(map[string]any{"v": 1, "rpId": "x", "clientDataJSON": []byte{}, "clientDataHash": make([]byte, 32), "attestationObject": []byte{1}}),
+		"too big":     make([]byte, maxEnvelopeSize+1),
+		"empty":       nil,
+		"v0":          enc(map[string]any{"v": 0, "rpId": "x", "clientDataJSON": []byte("{}"), "clientDataHash": make([]byte, 32), "attestationObject": []byte{1}}),
+	}
+	for name, b := range cases {
+		if _, err := decodeEnvelope(b); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if _, err := decodeEnvelope(gb); err != nil {
+		t.Errorf("good refused: %v", err)
+	}
+}
+
+func TestEnvelopeVerifyInputsRefusals(t *testing.T) {
+	cdOf := func(s string) envelope {
+		h := sha256.Sum256([]byte(s))
+		return envelope{ClientDataJSON: []byte(s), ClientDataHash: h[:], AttestationObject: []byte{0xa0}}
+	}
+	for name, e := range map[string]envelope{
+		"not json":     cdOf("x"),
+		"no challenge": cdOf(`{"type":"webauthn.create"}`),
+		"not cbor":     func() envelope { e := cdOf(`{"challenge":"AAAA"}`); e.AttestationObject = []byte{0xff}; return e }(),
+		"bad authData": cdOf(`{"challenge":"AAAA"}`),
+	} {
+		if _, _, _, err := e.verifyInputs(); err == nil {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }
 
