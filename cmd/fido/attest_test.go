@@ -419,3 +419,113 @@ func TestFmtAAGUID(t *testing.T) {
 		t.Error("flags none")
 	}
 }
+
+func TestAttestPINPathRefusals(t *testing.T) {
+	pinKey := func() *fake {
+		f := attestFake(t, attestCase{ext: extMatch})
+		delete(f.info.Options, "uv")
+		return f
+	}
+	f := pinKey()
+	f.info.ForcePINChange = true
+	if _, _, err := run("attest"); err == nil || !strings.Contains(err.Error(), "pin change") {
+		t.Errorf("force change: %v", err)
+	}
+	f = pinKey()
+	f.retriesErr = boom
+	if _, _, err := run("attest"); !errors.Is(err, boom) {
+		t.Errorf("retries: %v", err)
+	}
+	f = pinKey()
+	(&term{err: boom}).install(t)
+	if _, _, err := run("attest"); !errors.Is(err, boom) {
+		t.Errorf("terminal: %v", err)
+	}
+	f = pinKey()
+	f.tokenErr = boom
+	(&term{answers: []string{"x"}}).install(t)
+	if _, _, err := run("attest"); !errors.Is(err, boom) {
+		t.Errorf("token: %v", err)
+	}
+	// A PIN given as a file wins over built-in verification.
+	f = attestFake(t, attestCase{ext: extMatch})
+	if _, _, err := run("attest", "--pin-file", secretFile(t, "filepin\n", 0o600)); err != nil || f.tokenPIN != "filepin" || f.mcReq.Options["uv"] {
+		t.Errorf("pin-file: %v %q", err, f.tokenPIN)
+	}
+}
+
+func TestAttestSaveToUnwritable(t *testing.T) {
+	attestFake(t, attestCase{ext: extMatch})
+	p := filepath.Join(t.TempDir(), "no", "such", "dir", "a.cbor")
+	if _, _, err := run("attest", "--save-to", p); err == nil || !strings.Contains(err.Error(), "--save-to") {
+		t.Errorf("%v", err)
+	}
+}
+
+func TestAttestShowsAStatementItCannotRead(t *testing.T) {
+	garbage, _ := ctap2Enc.Marshal(map[string]any{"alg": -7, "sig": []byte{1}, "x5c": [][]byte{{1, 2, 3}}})
+	tooMany, _ := ctap2Enc.Marshal(map[string]any{"alg": -7, "sig": []byte{1}, "x5c": make([][]byte, 9)})
+	for name, st := range map[string][]byte{"not a certificate": garbage, "too many": tooMany, "not CBOR map": {0x01}} {
+		f := attestFake(t, attestCase{ext: extMatch})
+		inner := f.mcFn
+		f.mcFn = func(r authn.MakeCredentialRequest) (*authn.Attestation, error) {
+			a, err := inner(r)
+			if a != nil {
+				a.Statement = st
+			}
+			return a, err
+		}
+		out, _, err := run("attest")
+		if err == nil || !strings.Contains(out, "fmt:            packed") {
+			t.Errorf("%s: %v\n%s", name, err, out)
+		}
+		if name == "not a certificate" && !strings.Contains(out, "NOT A CERTIFICATE") {
+			t.Errorf("%s", out)
+		}
+		if name != "not a certificate" && !strings.Contains(out, "UNREADABLE") {
+			t.Errorf("%s: %s", name, out)
+		}
+	}
+}
+
+func TestAttestMDSRootsUnreadable(t *testing.T) {
+	attestFake(t, attestCase{ext: extMatch})
+	e := entryWith(bioAAGUID, "Broken")
+	e.MetadataStatement.AttestationRootCertificates = []string{"!!"}
+	useBlob(t, &mds.Blob{No: 3, Entries: []mds.Entry{e}}, nil)
+	out, _, err := run("attest")
+	if err == nil || !strings.Contains(out, "NOT CHECKED: the MDS roots of") {
+		t.Errorf("%v\n%s", err, out)
+	}
+}
+
+func TestCertAAGUIDMalformations(t *testing.T) {
+	for name, v := range map[string][]byte{"not DER": {0xff}, "trailing": append(mustOctets(attestAAGUID[:]), 0), "short": mustOctets([]byte{1})} {
+		x := certAAGUID(&x509.Certificate{Extensions: []pkix.Extension{{Id: oidAAGUID, Value: v}}})
+		if !x.Present || x.Value != nil || x.Err == "" {
+			t.Errorf("%s: %+v", name, x)
+		}
+	}
+	if x := certAAGUID(&x509.Certificate{}); x.Present {
+		t.Error("absent reported present")
+	}
+}
+
+func mustOctets(b []byte) []byte { v, _ := asn1.Marshal(b); return v }
+
+func TestAttestationObjectOfAnEmptyAndAnInvalidStatement(t *testing.T) {
+	b, err := attestationObject(&authn.Attestation{Format: "none", AuthData: []byte{1}})
+	if err != nil || !bytes.Contains(b, []byte{0xa0}) {
+		t.Errorf("empty statement: %v %x", err, b)
+	}
+	if _, err := attestationObject(&authn.Attestation{Format: "packed", Statement: []byte{0xff}}); err == nil {
+		t.Error("an invalid statement was encoded")
+	}
+	f := attestFake(t, attestCase{ext: extMatch})
+	f.mcFn = func(authn.MakeCredentialRequest) (*authn.Attestation, error) {
+		return &authn.Attestation{Format: "packed", Statement: []byte{0xff}}, nil
+	}
+	if _, _, err := run("attest"); err == nil {
+		t.Error("an invalid statement was reported")
+	}
+}

@@ -143,10 +143,8 @@ func checkSaveTo(path string) error {
 	if path == "" {
 		return nil
 	}
-	if _, err := os.Lstat(path); err == nil {
-		return fmt.Errorf("%s exists: --save-to never overwrites", safe(path))
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%s exists or cannot be examined: --save-to never overwrites", safe(path))
 	}
 	return nil
 }
@@ -157,11 +155,8 @@ func writeNew(path string, b []byte) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	_, werr := f.Write(b)
+	return errors.Join(werr, f.Close())
 }
 
 func attestCmd() *cobra.Command {
@@ -205,14 +200,11 @@ func runAttest(cmd *cobra.Command, o attestOpts, refresh bool) error {
 		return err
 	}
 
+	// crypto/rand.Read never fails: the process stops if the system source does.
 	challenge := make([]byte, 32)
 	userID := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, challenge); err != nil {
-		return err
-	}
-	if _, err := io.ReadFull(rand.Reader, userID); err != nil {
-		return err
-	}
+	rand.Read(challenge)
+	rand.Read(userID)
 	cdJSON := []byte(`{"type":"webauthn.create","challenge":"` + base64.RawURLEncoding.EncodeToString(challenge) +
 		`","origin":"` + attestOrigin + `"}`)
 	hash := sha256.Sum256(cdJSON)
@@ -280,13 +272,8 @@ func attestationObject(att *authn.Attestation) ([]byte, error) {
 	})
 }
 
-var ctap2Enc = func() cbor.EncMode {
-	m, err := cbor.CTAP2EncOptions().EncMode()
-	if err != nil {
-		panic("fido: the CBOR library refused its own CTAP2 options: " + err.Error())
-	}
-	return m
-}()
+// ctap2Enc encodes canonically; the options are constants, which EncMode accepts.
+var ctap2Enc, _ = cbor.CTAP2EncOptions().EncMode()
 
 // flagNames lists the set flags of authenticator data.
 func flagNames(f authn.Flags) string {
