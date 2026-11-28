@@ -4,9 +4,9 @@ go 1.27.4
 
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0
-	github.com/go-authn/fido v0.16.0
-	github.com/go-authn/secretsource v0.5.0
-	github.com/go-authn/webauthn v0.3.0
+	github.com/go-authn/fido v0.17.0
+	github.com/go-authn/secretsource v0.12.1
+	github.com/go-authn/webauthn v0.5.0
 	github.com/go-gnulinux/fido v0.6.0
 	github.com/go-macos/fido v0.6.0
 	github.com/spf13/cobra v1.10.2
@@ -16,6 +16,7 @@ require (
 
 require (
 	github.com/ebitengine/purego v0.11.2 // indirect
+	github.com/go-authn/harden v0.2.0 // indirect
 	github.com/go-freedesktop/secretservice v0.4.0 // indirect
 	github.com/go-macos/iokit v0.14.0 // indirect
 	github.com/go-macos/keychain v0.3.1 // indirect
